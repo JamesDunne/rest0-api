@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using Newtonsoft.Json;
 
-namespace REST0.APIService.Services
+namespace REST0.APIService.Descriptors
 {
-    class ParameterTypeDescriptor
+    class ParameterType
     {
         [JsonProperty("name")]
         public string Name { get; set; }

@@ -3,30 +3,30 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 
-namespace REST0.APIService.Services
+namespace REST0.APIService.Descriptors
 {
-    class ServiceDescriptor
+    class Service
     {
         [JsonProperty("name")]
         public string Name { get; set; }
         [JsonIgnore()]
-        public ServiceDescriptor BaseService { get; set; }
+        public Service BaseService { get; set; }
         [JsonProperty("$")]
         public IDictionary<string, string> Tokens { get; set; }
         [JsonProperty("connection")]
-        public ConnectionDescriptor Connection { get; set; }
+        public Connection Connection { get; set; }
         [JsonProperty("parameterTypes")]
-        public IDictionary<string, ParameterTypeDescriptor> ParameterTypes { get; set; }
+        public IDictionary<string, ParameterType> ParameterTypes { get; set; }
         [JsonProperty("methods")]
-        public IDictionary<string, MethodDescriptor> Methods { get; set; }
+        public IDictionary<string, Method> Methods { get; set; }
     }
 
-    class ServiceDescriptorSerialized
+    class ServiceSerialized
     {
         [JsonIgnore]
-        readonly ServiceDescriptor desc;
+        readonly Service desc;
 
-        internal ServiceDescriptorSerialized(ServiceDescriptor desc)
+        internal ServiceSerialized(Service desc)
         {
             this.desc = desc;
         }
@@ -38,7 +38,7 @@ namespace REST0.APIService.Services
         [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
         public string Connection { get { return desc.Connection.ConnectionString; } }
         [JsonProperty("parameterTypes", NullValueHandling = NullValueHandling.Ignore)]
-        public IDictionary<string, ParameterTypeDescriptor> ParameterTypes
+        public IDictionary<string, ParameterType> ParameterTypes
         {
             get
             {
@@ -49,6 +49,6 @@ namespace REST0.APIService.Services
             }
         }
         [JsonProperty("methods", NullValueHandling = NullValueHandling.Ignore)]
-        public IDictionary<string, MethodDescriptorSerialized> Methods { get { return desc.Methods.ToDictionary(m => m.Key, m => new MethodDescriptorSerialized(m.Value), StringComparer.OrdinalIgnoreCase); } }
+        public IDictionary<string, MethodSerialized> Methods { get { return desc.Methods.ToDictionary(m => m.Key, m => new MethodSerialized(m.Value), StringComparer.OrdinalIgnoreCase); } }
     }
 }

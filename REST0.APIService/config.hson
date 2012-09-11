@@ -16,15 +16,14 @@
     `GET /meta/serviceName/methodName`
     `GET /data/serviceName/methodName?params`
   Examples:
-    `GET /data/sis;quad/GetStudent?id=1`
+    `GET /data/sis;core/GetStudent?id=1`
 
   A request parameter may be assigned an explicit NULL value via `param=#00`, i.e. encoding the NUL character in the URL.
 */
 {
     // This is the main set of aliases for services:
     "aliases": {
-        "sis;core": "sis;core;v1",
-        "sis;quad": "sis;quad;v4"
+        "sis;core": "sis;core;v5"
     },
     // The "$" key indicates a shared dictionary of key/value pairs. This is the global dictionary.
     // Its values may be overridden per service. These values can be interpolated in string literals with
@@ -95,8 +94,7 @@
                 }
             }
         },
-        // Here we define Quad-specific service offerings:
-        "sis;quad;v1": {
+        "sis;core;v2": {
             // The "base" directive indicates which service to inherit the definition of. Everything defined in
             // the base service is included in this definition and may be overridden or removed by assigning it
             // to a `null` value.
@@ -121,9 +119,8 @@
                 }
             }
         },
-        "sis;quad;v2": {
-            // Based on version "v1" above:
-            "base": "sis;quad;v1",
+        "sis;core;v3": {
+            "base": "sis;core;v2",
             // Methods are added to/overwritten over the base service:
             "methods": {
                 // We deprecate the "Questionable" method here with a warning message; it may still be used, but
@@ -131,8 +128,8 @@
                 "Questionable": { "deprecated": "This method does not correctly query data." }
             }
         },
-        "sis;quad;v3": {
-            "base": "sis;quad;v2",
+        "sis;core;v4": {
+            "base": "sis;core;v3",
             "parameterTypes": {
                 "LastName":     { "type": "nvarchar(50)" }
             },
@@ -158,6 +155,6 @@
         // local files directly into this document. This helps break out large service offerings
         // into more manageable divisions. `@import` directives may be placed at any point in the
         // HSON document, so long as the final result produces a well-formed JSON result.
-        @import("sis;quad;v4.hson")
+        @import("sis;core;v5.hson")
     }
 }

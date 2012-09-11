@@ -64,16 +64,16 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Extensions.cs" />
-    <Compile Include="Services\APIHttpAsyncHandler.cs" />
+    <Compile Include="APIHttpAsyncHandler.cs" />
     <Compile Include="HsonReader.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Services\ConnectionDescriptor.cs" />
-    <Compile Include="Services\ParameterDescriptor.cs" />
-    <Compile Include="Services\QueryDescriptor.cs" />
-    <Compile Include="Services\ServiceDescriptor.cs" />
-    <Compile Include="Services\MethodDescriptor.cs" />
-    <Compile Include="Services\ParameterTypeDescriptor.cs" />
+    <Compile Include="Descriptors\Connection.cs" />
+    <Compile Include="Descriptors\Parameter.cs" />
+    <Compile Include="Descriptors\Query.cs" />
+    <Compile Include="Descriptors\Service.cs" />
+    <Compile Include="Descriptors\Method.cs" />
+    <Compile Include="Descriptors\ParameterType.cs" />
     <Compile Include="SHA1Hashed.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -89,7 +89,7 @@
     <Content Include="config.hson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="sis%3bquad%3bv4.hson">
+    <Content Include="sis%3bcore%3bv5.hson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

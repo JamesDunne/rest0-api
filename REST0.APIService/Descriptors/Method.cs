@@ -4,39 +4,39 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace REST0.APIService.Services
+namespace REST0.APIService.Descriptors
 {
-    class MethodDescriptor
+    class Method
     {
         [JsonProperty("name")]
         public string Name { get; set; }
         [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
         public string DeprecatedMessage { get; set; }
         [JsonProperty("parameters")]
-        public IDictionary<string, ParameterDescriptor> Parameters { get; set; }
+        public IDictionary<string, Parameter> Parameters { get; set; }
         [JsonProperty("connection")]
-        public ConnectionDescriptor Connection { get; set; }
+        public Connection Connection { get; set; }
         [JsonProperty("query")]
-        public QueryDescriptor Query { get; set; }
+        public Query Query { get; set; }
 
-        internal MethodDescriptor Clone()
+        internal Method Clone()
         {
-            return new MethodDescriptor()
+            return new Method()
             {
                 Name = this.Name,
-                Parameters = new Dictionary<string, ParameterDescriptor>(this.Parameters, StringComparer.OrdinalIgnoreCase),
+                Parameters = new Dictionary<string, Parameter>(this.Parameters, StringComparer.OrdinalIgnoreCase),
                 Connection = this.Connection,
                 Query = this.Query
             };
         }
     }
 
-    class MethodDescriptorSerialized
+    class MethodSerialized
     {
         [JsonIgnore()]
-        readonly MethodDescriptor desc;
+        readonly Method desc;
 
-        internal MethodDescriptorSerialized(MethodDescriptor desc)
+        internal MethodSerialized(Method desc)
         {
             this.desc = desc;
         }
@@ -44,7 +44,7 @@ namespace REST0.APIService.Services
         [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
         public string DeprecatedMessage { get { return desc.DeprecatedMessage; } }
         [JsonProperty("parameters")]
-        public IDictionary<string, ParameterDescriptorSerialized> Parameters { get { return desc.Parameters.ToDictionary(p => p.Key, p => new ParameterDescriptorSerialized(p.Value), StringComparer.OrdinalIgnoreCase); } }
+        public IDictionary<string, ParameterSerialized> Parameters { get { return desc.Parameters.ToDictionary(p => p.Key, p => new ParameterSerialized(p.Value), StringComparer.OrdinalIgnoreCase); } }
         [JsonProperty("connection")]
         public string Connection { get { return desc.Connection.ConnectionString; } }
         [JsonProperty("sql", NullValueHandling = NullValueHandling.Ignore)]

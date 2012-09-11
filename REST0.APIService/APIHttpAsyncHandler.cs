@@ -10,15 +10,16 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using REST0.APIService.Descriptors;
 
 #pragma warning disable 1998
 
-namespace REST0.APIService.Services
+namespace REST0.APIService
 {
     public sealed class APIHttpAsyncHandler : IHttpAsyncHandler, IInitializationTrait, IConfigurationTrait
     {
         ConfigurationDictionary localConfig;
-        SHA1Hashed<IDictionary<string, ServiceDescriptor>> services;
+        SHA1Hashed<IDictionary<string, Service>> services;
 
         #region Handler configure and initialization
 
@@ -83,7 +84,7 @@ namespace REST0.APIService.Services
             // Parse the config document:
             var doc = config.Value;
 
-            var tmpServices = new Dictionary<string, ServiceDescriptor>(StringComparer.OrdinalIgnoreCase);
+            var tmpServices = new Dictionary<string, Service>(StringComparer.OrdinalIgnoreCase);
 
             // Parse the root token dictionary first:
             var rootTokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -96,7 +97,7 @@ namespace REST0.APIService.Services
             }
 
             // Parse root parameter types:
-            var rootParameterTypes = new Dictionary<string, ParameterTypeDescriptor>(StringComparer.OrdinalIgnoreCase);
+            var rootParameterTypes = new Dictionary<string, ParameterType>(StringComparer.OrdinalIgnoreCase);
             var jpParameterTypes = doc.Property("parameterTypes");
             parseParameterTypes(rootParameterTypes, (s) => s, jpParameterTypes);
 
@@ -114,12 +115,12 @@ namespace REST0.APIService.Services
 
                 // This property is a service:
 
-                ServiceDescriptor baseService = null;
+                Service baseService = null;
 
                 IDictionary<string, string> tokens;
-                ConnectionDescriptor conn;
-                IDictionary<string, ParameterTypeDescriptor> parameterTypes;
-                IDictionary<string, MethodDescriptor> methods;
+                Connection conn;
+                IDictionary<string, ParameterType> parameterTypes;
+                IDictionary<string, Method> methods;
 
                 // Go through the properties of the named service object:
                 var jpBase = joService.Property("base");
@@ -131,11 +132,11 @@ namespace REST0.APIService.Services
 
                     // Create copies of what's inherited from the base service to mutate:
                     tokens = new Dictionary<string, string>(baseService.Tokens);
-                    parameterTypes = new Dictionary<string, ParameterTypeDescriptor>(baseService.ParameterTypes, StringComparer.OrdinalIgnoreCase);
-                    methods = new Dictionary<string, MethodDescriptor>(baseService.Methods, StringComparer.OrdinalIgnoreCase);
+                    parameterTypes = new Dictionary<string, ParameterType>(baseService.ParameterTypes, StringComparer.OrdinalIgnoreCase);
+                    methods = new Dictionary<string, Method>(baseService.Methods, StringComparer.OrdinalIgnoreCase);
 
                     // Copy the connection descriptor:
-                    conn = new ConnectionDescriptor()
+                    conn = new Connection()
                     {
                         DataSource = baseService.Connection.DataSource,
                         InitialCatalog = baseService.Connection.InitialCatalog,
@@ -154,8 +155,8 @@ namespace REST0.APIService.Services
                     // Nothing inherited:
                     conn = null;
                     tokens = new Dictionary<string, string>(rootTokens, StringComparer.OrdinalIgnoreCase);
-                    parameterTypes = new Dictionary<string, ParameterTypeDescriptor>(rootParameterTypes, StringComparer.OrdinalIgnoreCase);
-                    methods = new Dictionary<string, MethodDescriptor>(StringComparer.OrdinalIgnoreCase);
+                    parameterTypes = new Dictionary<string, ParameterType>(rootParameterTypes, StringComparer.OrdinalIgnoreCase);
+                    methods = new Dictionary<string, Method>(StringComparer.OrdinalIgnoreCase);
                 }
 
                 // Parse tokens:
@@ -182,7 +183,7 @@ namespace REST0.APIService.Services
                 if (jpConnection != null)
                 {
                     // Completely override what has been inherited, if anything:
-                    conn = new ConnectionDescriptor();
+                    conn = new Connection();
 
                     // Set the connection properties:
                     foreach (var prop in ((JObject)jpConnection.Value).Properties())
@@ -251,12 +252,12 @@ namespace REST0.APIService.Services
                         var joMethod = ((JObject)jpMethod.Value);
 
                         // Create a clone of the inherited descriptor or a new descriptor:
-                        MethodDescriptor method;
+                        Method method;
                         if (methods.TryGetValue(jpMethod.Name, out method))
                             method = method.Clone();
                         else
                         {
-                            method = new MethodDescriptor()
+                            method = new Method()
                             {
                                 Name = jpMethod.Name,
                                 Connection = conn
@@ -272,7 +273,7 @@ namespace REST0.APIService.Services
                         var jpParameters = joMethod.Property("parameters");
                         if (jpParameters != null)
                         {
-                            method.Parameters = new Dictionary<string, ParameterDescriptor>(StringComparer.OrdinalIgnoreCase);
+                            method.Parameters = new Dictionary<string, Parameter>(StringComparer.OrdinalIgnoreCase);
                             foreach (var jpParam in ((JObject)jpParameters.Value).Properties())
                             {
                                 var joParam = ((JObject)jpParam.Value);
@@ -280,7 +281,7 @@ namespace REST0.APIService.Services
                                 var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
                                 var isOptional = getBool(joParam.Property("optional")) ?? false;
 
-                                var param = new ParameterDescriptor()
+                                var param = new Parameter()
                                 {
                                     Name = jpParam.Name,
                                     SqlName = sqlName,
@@ -292,14 +293,14 @@ namespace REST0.APIService.Services
                         }
                         else if (method.Parameters == null)
                         {
-                            method.Parameters = new Dictionary<string, ParameterDescriptor>(StringComparer.OrdinalIgnoreCase);
+                            method.Parameters = new Dictionary<string, Parameter>(StringComparer.OrdinalIgnoreCase);
                         }
 
                         var jpQuery = joMethod.Property("query");
                         if (jpQuery != null)
                         {
                             var joQuery = (JObject)jpQuery.Value;
-                            method.Query = new QueryDescriptor();
+                            method.Query = new Query();
 
                             // Check what type of query descriptor this is:
                             var sql = getString(joQuery.Property("sql")).Interpolate(tokenLookup);
@@ -433,13 +434,13 @@ namespace REST0.APIService.Services
                         }
                         else if (method.Query == null)
                         {
-                            method.Query = new QueryDescriptor();
+                            method.Query = new Query();
                         }
                     }
                 }
 
                 // Create the service descriptor:
-                var desc = new ServiceDescriptor()
+                var desc = new Service()
                 {
                     Name = jpService.Name,
                     BaseService = baseService,
@@ -461,18 +462,18 @@ namespace REST0.APIService.Services
                 var joAliases = (JObject)jpAliases.Value;
                 foreach (var alias in joAliases.Properties())
                 {
-                    // Add the existing ServiceDescriptor reference to the new name:
+                    // Add the existing Service reference to the new name:
                     tmpServices.Add(alias.Name, tmpServices[getString(alias)]);
                 }
             }
 
             // The update must boil down to an atomic reference update:
-            services = new SHA1Hashed<IDictionary<string, ServiceDescriptor>>(tmpServices, config.Hash);
+            services = new SHA1Hashed<IDictionary<string, Service>>(tmpServices, config.Hash);
 
             return true;
         }
 
-        static void parseParameterTypes(IDictionary<string, ParameterTypeDescriptor> parameterTypes, Func<string, string> interpolate, JProperty jpParameterTypes)
+        static void parseParameterTypes(IDictionary<string, ParameterType> parameterTypes, Func<string, string> interpolate, JProperty jpParameterTypes)
         {
             if (jpParameterTypes != null)
             {
@@ -504,7 +505,7 @@ namespace REST0.APIService.Services
                         type = type.Substring(0, idx);
                     }
 
-                    parameterTypes[jpParam.Name] = new ParameterTypeDescriptor()
+                    parameterTypes[jpParam.Name] = new ParameterType()
                     {
                         Name = jpParam.Name,
                         Type = type,
@@ -1007,7 +1008,7 @@ namespace REST0.APIService.Services
             return list;
         }
 
-        async Task<JsonResult> ExecuteQuery(HttpListenerRequest req, MethodDescriptor method)
+        async Task<JsonResult> ExecuteQuery(HttpListenerRequest req, Method method)
         {
             if (method.Query.SQL == null)
             {
@@ -1147,14 +1148,14 @@ namespace REST0.APIService.Services
                         success = true,
                         statusCode = 200,
                         hash = services.HashHexString,
-                        services = services.Value.ToDictionary(s => s.Key, s => s.Key != s.Value.Name ? (object)s.Value.Name : (object)new ServiceDescriptorSerialized(s.Value))
+                        services = services.Value.ToDictionary(s => s.Key, s => s.Key != s.Value.Name ? (object)s.Value.Name : (object)new ServiceSerialized(s.Value))
                     });
                 }
 
                 // Look up the service name:
                 string serviceName = path[1];
 
-                ServiceDescriptor desc;
+                Service desc;
                 if (!services.Value.TryGetValue(serviceName, out desc))
                     return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown service name '{0}'".F(serviceName) });
 
@@ -1166,7 +1167,7 @@ namespace REST0.APIService.Services
                         success = true,
                         statusCode = 200,
                         hash = services.HashHexString,
-                        service = new ServiceDescriptorSerialized(desc)
+                        service = new ServiceSerialized(desc)
                     });
                 }
                 if (path.Length > 3)
@@ -1176,7 +1177,7 @@ namespace REST0.APIService.Services
 
                 // Find method:
                 string methodName = path[2];
-                MethodDescriptor method;
+                Method method;
                 if (!desc.Methods.TryGetValue(methodName, out method))
                     return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown method name '{0}'".F(methodName) });
 
@@ -1186,7 +1187,7 @@ namespace REST0.APIService.Services
                     success = true,
                     statusCode = 200,
                     hash = services.HashHexString,
-                    method = new MethodDescriptorSerialized(method)
+                    method = new MethodSerialized(method)
                 });
             }
             else if (path[0] == "data")
@@ -1199,7 +1200,7 @@ namespace REST0.APIService.Services
                 // Look up the service name:
                 string serviceName = path[1];
 
-                ServiceDescriptor desc;
+                Service desc;
                 if (!services.Value.TryGetValue(serviceName, out desc))
                     return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown service name '{0}'".F(serviceName) });
 
@@ -1214,7 +1215,7 @@ namespace REST0.APIService.Services
 
                 // Find method:
                 string methodName = path[2];
-                MethodDescriptor method;
+                Method method;
                 if (!desc.Methods.TryGetValue(methodName, out method))
                     return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown method name '{0}'".F(methodName) });
 

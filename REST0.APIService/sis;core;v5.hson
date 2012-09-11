@@ -1,5 +1,5 @@
-﻿"sis;quad;v4": {
-    "base": "sis;quad;v3",
+﻿"sis;core;v5": {
+    "base": "sis;core;v4",
     "methods": {
         "GetStudentsByLastName": {
             "parameters": {

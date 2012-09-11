@@ -4,9 +4,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace REST0.APIService.Services
+namespace REST0.APIService.Descriptors
 {
-    class QueryDescriptor
+    class Query
     {
         [JsonIgnore]
         public Dictionary<string, string> XMLNamespaces { get; set; }
