@@ -2,7 +2,8 @@ REST0-API
 =========
 
 This project allows .NET developers to declaratively construct a RESTful web service which directly executes SQL
-queries against an MS SQL Server and returns their results as JSON. No coding required, except writing SQL queries.
+queries against an MS SQL Server and returns their results as JSON. There is no boilerplate C# or VB coding
+required. All you have to do is declare methods and the SQL queries used to fetch data.
 
 How it works
 ------------
@@ -12,7 +13,7 @@ a local file) and parses it and fully constructs all services and methods. Once 
 is ready to process HTTP requests. The service also sets up a background task to frequently fetch the service
 descriptor file so it can run unattended and keep itself up-to-date.
 
-Before we get too far into the declarative nature, let's take a look at a very simple example data request.
+Let's take a look at a very simple example data request:
 
 **Request:**
 `GET /data/sis;core/GetStudent?id=1`
@@ -34,10 +35,10 @@ Before we get too far into the declarative nature, let's take a look at a very s
 
 Let's break down this example URL:
 
- * `/data` means this is a data request; one may also do /meta/ requests to get useful metadata.
+ * `/data` means this is a data request; one may also do `/meta` requests to get useful metadata.
  * `/sis;core` indicates the service's full name. Service name components are separated with semicolons to allow
    for namespacing and versioning. Aliases may also be set up to allow bleeding-edge clients to always work
-   against the latest version of a service. In our example, "sis;core" is an alias for "sis;core;v5", the
+   against the latest version of a service. In our example, `"sis;core"` is an alias for `"sis;core;v5"`, the
    latest version defined.
  * `/GetStudent` is the method name selected from the service to execute
  * `?id=1` is a query-string parameter which is bound to a SQL parameter `@id`
@@ -70,7 +71,7 @@ Declarative HSON
 The declarative approach is achieved through the use of a human-readable JSON file format which I call HSON.
 HSON includes nice features on top of JSON such as comments (both `//` and `/* */` kind) and multi-line string
 literals (e.g. `@"Hello, ""world""."`). HSON also allows one to import partial HSON documents directly into the
-current HSON document (recursively, of course) using the @import("path") directive. This import functionality
+current HSON document (recursively, of course) using the `@import("path")` directive. This import functionality
 allows for a more maintainable service descriptor which can be split across many files.
 
 Let's take a look at an example of how a service developer would define a service and its methods.
@@ -128,15 +129,15 @@ service descriptors assigned to each name. There are several elements of a servi
     Set these to the server name (and instance) and the database name, respectively.
   * `methods`: defines method names and the SQL queries used to execute them.
 
-This is a non-exhaustive list. There are a few more sections used for advanced purposes that will
-be covered later in more detail.
+This is a non-exhaustive list of service descriptor properties. There are a few more sections used for
+advanced purposes that will be covered later in more detail.
 
 Of course, the `methods` section is the main section of interest here. It is a dictionary of unique
 method names with method descriptors assigned to each name. There are several elements of a method
 descriptor:
 
   * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
-  * `connection`: override the service-level DB connection
+  * `connection`: override the service-level DB connection.
   * `query`: defines the parts of the SQL SELECT query to be executed.
 
 The SQL query is broken out into individual clauses of the SELECT query. This separation is beneficial
