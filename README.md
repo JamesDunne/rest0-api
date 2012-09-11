@@ -1,35 +1,37 @@
 REST0-API
 =========
 
-This project allows .NET developers to declaratively construct a RESTful web service which directly executes SQL
-queries against an MS SQL Server and returns their results as JSON. There is no boilerplate C# or VB coding
-required. All you have to do is declare methods and the SQL queries used to fetch data.
+This project allows .NET developers to declaratively construct a RESTful web service which directly executes SQL queries
+against an MS SQL Server and returns their results as JSON.
 
-How it works
-------------
+For the service developer, there is no boilerplate C# or VB coding required. All you have to do is declare services and
+methods and the SQL queries for those methods inside a simple descriptor document.
 
-When the service host application first starts up, it fetches a service descriptor file (either via HTTP or via
-a local file) and parses it and fully constructs all services and methods. Once the descriptor is parsed, the service
-is ready to process HTTP requests. The service also sets up a background task to frequently fetch the service
-descriptor file so it can run unattended and keep itself up-to-date.
+This project is based on my REST0 framework found at https://github.com/JamesDunne/rest0. This framework provides the
+asynchronous HTTP service host which efficiently serves requests dynamically.
 
-Let's take a look at a very simple example data request:
+Example
+-------
+
+Let's take a look at a very simple example data request to get a feel for what the project does:
 
 **Request:**
+
 `GET /data/sis;core/GetStudent?id=1`
 
 **Response:**
+
 ```javascript
 {
-    "results": [
-        {
-            "Student": {
-                "StudentID": 1,
-                "FirstName": "James",
-                "LastName": "Dunne"
-            }
-        }
-    ]
+  "results": [
+    {
+      "Student": {
+        "StudentID": 1,
+        "FirstName": "James",
+        "LastName": "Dunne"
+      }
+    }
+  ]
 }
 ```
 
@@ -49,103 +51,91 @@ As it turns out, the path part of a request URL is always made of 3 parts:
  2. service name
  3. method name
 
-If a client wants to stick to a known, specific version of the service, all it has to do is specify that
-exact service name in the request URL, e.g.
+How it works
+------------
 
-`GET /data/sis;core;v5/GetStudent?id=1`
+When the service host application first starts up, it fetches a service descriptor file (either via HTTP or via a local file)
+and parses it to fully constructs all services and methods. Once the descriptor is parsed, the service is ready to process
+HTTP requests. The service also sets up a background task to frequently fetch new versions of the service descriptor file so
+that it can run unattended and keep itself up-to-date.
 
-This way the client can protect itself against unwanted breaking changes which are bound to come. Of course,
-if the developers responsible for the service's definition begin altering older versions then all bets are off.
-The intention here is to provide the service developers with reasonable tooling to make it easy to maintain a
-reasonable versioning strategy and to provide a reasonable guarantee to clients that things will not change for
-a specific version.
+The declarative approach is achieved through the use of a human-readable JSON file format which I call HSON. HSON includes
+nice features on top of JSON such as comments (both `//` and `/* */` kind) and multi-line string literals (e.g.
+`@"Hello, ""world""."`). HSON also allows one to import partial HSON documents directly into the current HSON document
+(recursively, of course) using the `@import("path")` directive. This import functionality allows for a more maintainable
+service descriptor which can be split across many files.
 
-Great attention has been given to versioning of services and making it easy to define those versions. The optimal
-workflow is to define a base service as version 1 and create incremental versions from there. Once a version
-has been stablized, release it and start work on the next version based on the just-released version; one should
-*never* alter old stablizied versions.
-
-Declarative HSON
-----------------
-
-The declarative approach is achieved through the use of a human-readable JSON file format which I call HSON.
-HSON includes nice features on top of JSON such as comments (both `//` and `/* */` kind) and multi-line string
-literals (e.g. `@"Hello, ""world""."`). HSON also allows one to import partial HSON documents directly into the
-current HSON document (recursively, of course) using the `@import("path")` directive. This import functionality
-allows for a more maintainable service descriptor which can be split across many files.
-
-Let's take a look at an example of how a service developer would define a service and its methods.
+Let's take a look at the simplest example of how a service developer would define a single service and a single method:
 
 ```javascript
 {
-    "aliases": {
-        "sis;core": "sis;core;v1"
-    },
-    "parameterTypes": {
-        "StudentID": { "type": "int" },
-    },
-    "services": {
-        "sis;core;v1": {
-            "connection": {
-                "dataSource":       "(local)\\SQLEXPRESS",
-                "initialCatalog":   "APITest"
-            },
-            "methods": {
-                "GetStudent": {
-                    "parameters": {
-                        "id":       { "sqlName": "@id",     "type": "StudentID" }
-                    },
-                    "query": {
-                        "from":     "vw_Student st",
-                        "where":    "st.StudentID = @id",
-                        "select":   "st.StudentID, st.FirstName, st.LastName"
-                    }
-                },
+  "services": {             // services dictionary
+    "sis;core;v1": {        // service name
+      "connection": {       // connection string
+        "dataSource":       "(local)\\SQLEXPRESS",
+        "initialCatalog":   "APITest"
+      },
+      "methods": {          // service methods dictionary
+        "GetStudent": {     // method name
+          "query": {        // SQL Query
+            "from":     "vw_Student st",
+            "select":   "st.StudentID, st.FirstName, st.LastName"
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
-First is the `aliases` section which lets a developer assign aliases to service names. The ideal
-use of this feature is to assign a non-versioned alias to the latest version of a service.
+First, we see the `services` section. This section is a dictionary of unique service names with a service descriptor assigned
+to each name. A service descriptor defines, among other things, all the methods that belong to that service.
 
-Semicolons are used in service names because they are URL-friendly. The convention is a three-part
-name beginning with the general category of service type followed by a specific variant name and
-finally a version identifier.
+At the next level, we see `sis;core;v1` as a property key. This is a unique name for a service and its value is that
+service's service descriptor.
 
-Next we see the `parameterTypes` section which defines a set of named SQL parameter types that all
-services may share. This section exists to reduce repetitiveness in parameter definition. At this
-level, the section is optional because it can also be specified at the service level.
+Semicolons are used in service names because they are URL-friendly. The convention is a three-part name beginning with the
+general category of service type followed by a specific variant name and finally a version identifier. The service developer
+is free to abandon this convention but it is strongly recommended to at least include a version identifier in the service
+names.
 
-The purpose of the set of named parameter types is to provide self-documentation of services and
-their parameters for new consumers. If a parameter is assigned a clearly named type, so much the
-better for the client developer. So far, the only property of a parameter type is `type` which is
-the SQL type to use for binding.
+The service descriptor in this example defines only two properties, `connection` and `methods`.
 
-Now we see the main section, `services`. This section is a dictionary of unique service names with
-service descriptors assigned to each name. There are several elements of a service descriptor:
+The `connection` property is used to describe the default database connection string used for all methods of this service. An
+individual method may provide its own `connection` property to override what's defined at the service level here. The minimum
+requirements for a `connection` are the `dataSource` and `initialCatalog` properties. Set these to the server name (and
+instance) and the database name, respectively. You can see here that we're referencing a local SQLEXPRESS instance and a
+database named "APITest". This sample database is included with the project and you can attach it to your
+local SQLEXPRESS instance.
 
-  * `parameterTypes`: override and create new service-specific `parameterType`s using the same format
-     introduced at the root level.
-  * `connection`: defines a common SQL connection string (via its common component parts).
-    The minimum requirements for a `connection` object are `dataSource` and `initialCatalog` properties.
-    Set these to the server name (and instance) and the database name, respectively.
-  * `methods`: defines method names and the SQL queries used to execute them.
+```javascript
+"methods": {          // service methods dictionary
+  "GetStudent": {     // method name
+    "query": {        // SQL Query
+      "from":     "vw_Student st",
+      "select":   "st.StudentID, st.FirstName, st.LastName"
+    }
+  }
+}
+```
 
-This is a non-exhaustive list of service descriptor properties. There are a few more sections used for
-advanced purposes that will be covered later in more detail.
+Next, we come to the `methods` section. This is the main section of interest here. It is a dictionary of unique method
+names with a method descriptor assigned to each name.
 
-Of course, the `methods` section is the main section of interest here. It is a dictionary of unique
-method names with method descriptors assigned to each name. There are several elements of a method
-descriptor:
+The method descriptor describes, among other things, the SQL query used to implement the method. This is the `query`
+property.
 
-  * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
-  * `connection`: override the service-level DB connection.
-  * `query`: defines the parts of the SQL SELECT query to be executed.
+The `query` property is interesting here in that is *not* one complete SELECT query in raw text form, as one might first
+expect. Rather, it is an object with properties each describing the individual clauses of a single SELECT query.
 
-The SQL query is broken out into individual clauses of the SELECT query. This separation is beneficial
-for many reasons. Firstly, it guarantees that one cannot write a query that is not a SELECT query.
-Secondly, it provides a way to rearrange the clauses of a SQL query in a way that is more readable and
-more amenable to a logical thought process during query development.
+This query clause separation is beneficial for many reasons. Firstly, it guarantees that one cannot write a query that is
+not a SELECT query. This is very useful for ensuring that the service will only read data and never mutate data. Secondly,
+it provides a way to rearrange the clauses of a SQL query in a way that is more readable and possibly more amenable to a
+logical thought process in forming a query. Finally, individual clauses of the query, such as `orderBy` may be used to
+drive the implementation of an automatic data paging mechanism. Having the clauses already broken out without having to
+parse the SQL makes it easy to implement such advanced features.
 
-The final query is constructed as follows:
+The final query is constructed as follows from the `query` object's properties:
 
     [WITH XMLNAMESPACES (
         '`xmlns:???`' AS `???`
@@ -158,13 +148,102 @@ The final query is constructed as follows:
     [HAVING `having`]
     [ORDER BY `orderBy`]
 
-Hopefully this break-down is clear where each property of the `query` object goes in the constructed
-SELECT query. The only property absolutely required is `select`, of course.
-NOTE: If this form is too restrictive, advanced developers may opt for the `sql` property which
-overrides this deconstructed form and allows one to specify raw SQL query code. Use of this property
-should be discouraged though. The deconstructed form guarantees safety in that one cannot write a
-non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can otherwise
-not be specified in the deconstructed form.
+Hopefully this break-down is clear as to where each property of the `query` object goes in the constructed SELECT query.
+The only property absolutely required of the `query` object is the `select` property.
+
+`WITH XMLNAMESPACES` is added to support SQL-XML queries. Adding a property of the form `xmlns:???` where ??? is an
+XML namespace prefix will assign that namespace prefix to the property's value as the namespace URI. For example, if
+we have `"xmlns:sis": "http://example.org/sis/v1"`, the resulting `WITH XMLNAMESPACES` clause will look like this:
+
+```sql
+    WITH XMLNAMESPACES (
+        'http://example.org/sis/v1' AS sis
+    )
+```
+
+NOTE: Developers may opt to use the `sql` property as opposed to the deconstructed form shown here. The `sql` property allows
+one to specify raw SQL query code. Use of this property should be discouraged though. The deconstructed form guarantees safety
+in that one cannot write a non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can
+otherwise not be specified in the deconstructed form.
+
+Methods
+-------
+
+There are several elements of a method descriptor:
+
+  * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
+  * `connection`: override the service-level DB connection.
+  * `query`: defines the parts of the SQL SELECT query to be executed.
+
+Parameters
+----------
+
+Parameters are inputs to methods which can be passed via the query-string all the way down to the SQL query.
+
+Each parameter must have a query-string name, a SQL name, and a type.
+
+Parameters are defined in a `parameters` section as part of a method descriptor.
+
+Let's take a look at an example `parameters` section:
+
+```javascript
+  "GetStudent": {       // method name
+    "parameters": {     // method parameters
+      "id": { "sqlName": "@id", "type": "StudentID" }
+    },
+    ...
+  }
+```
+
+Each key in the `parameters` section is the parameter name to be used in the request query-string. The parameter descriptor
+describes what that parameter's name is in the SQL query and what its type is.
+
+Notice that we're missing a definition for the `StudentID` parameter type here.
+
+Parameter types are described by `parameterTypes` sections. These sections may appear at the global level, the service level,
+or the method level.
+
+Let's take a look at an example `parameterTypes` section:
+
+```javascript
+{
+  "parameterTypes": {
+    "StudentID": { "type": "int" },
+  },
+  "services": {
+    ...
+  }
+}
+```
+
+Here we define a global parameter types section. This section is a dictionary of parameter type names where each name is
+assigned a parameter type descriptor. This descriptor describes the SQL type of the parameter via the `type` property.
+
+This section exists to reduce repetitiveness in parameter definition. The purpose of the set of named parameter types is to
+provide self-documentation of services and their parameters for new service consumers. If a parameter is assigned a clearly
+named type, as opposed to just `int`, this helps to document the fact that a `StudentID` primary key is expected as opposed
+to just any old integer value.
+
+Service Aliases
+---------------
+
+```javascript
+{
+  "aliases": {
+    "sis;core": "sis;core;v3"
+  },
+  "services": {
+    "sis;core;v1": { ... },
+    "sis;core;v2": { ... },
+    "sis;core;v3": { ... },
+  }
+}
+```
+
+Here we see an example `aliases` section at the root level of the descriptor document. It defines a set of named aliases
+for existing service names. This is useful for providing a layer of indirection over fixed service names. A common example
+is to create an unversioned alias name that always points to the bleeding-edge version name. This way, clients that want
+to stay on top can, while those that want to stick with a more constant service can specify the exact version they want.
 
 Versioning
 ----------
@@ -176,6 +255,23 @@ from.
 A derived service by default inherits all methods and parameter types from its base service. Methods and
 parameter types may be replaced or added in the derived service. Removing methods is done by assigning the
 method name to `null` inside the `methods` section.
+
+If a client wants to stick to a known, specific version of the service, all it has to do is specify that
+exact service name in the request URL, e.g.
+
+`GET /data/sis;core;v5/GetStudent?id=1`
+
+This way the client can protect itself against unwanted breaking changes which are bound to come. Of course, if the developers
+responsible for the service's definition begin altering older versions then all bets are off. The intention here is to provide
+the service developers with reasonable tooling to make it easy to maintain a reasonable versioning strategy and to provide a
+reasonable guarantee to clients that things will not change for a specific version.
+
+Great attention has been given to versioning of services and making it easy to define those versions. The optimal workflow is
+to define a base service as version 1 and create incremental versions from there. Once a version has been stablized, release
+it and start work on the next version based on the just-released version; one should *never* alter old stablizied versions.
+
+The service host is amenable to live updates and bumping clients up to the latest version should be as simple as updating an
+alias.
 
 String Interpolation
 --------------------
