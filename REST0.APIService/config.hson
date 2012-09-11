@@ -148,6 +148,20 @@
         // local files directly into this document. This helps break out large service offerings
         // into more manageable divisions. `@import` directives may be placed at any point in the
         // HSON document, so long as the final result produces a well-formed JSON result.
-        @import("sis;core;v5.hson")
+        @import("sis;core;v5.hson"),
+        "error-tests": {
+            "methods": {
+                "Test1": {
+                    "parameters": {
+                        "id": { "sqlName": "@id", "type": "nonexistent" }
+                    }
+                },
+                "Test2": {
+                    "parameters": {
+                        "id": { "sqlName": "@id", "sqlType": "int" }
+                    }
+                }
+            }
+        }
     }
 }

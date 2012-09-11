@@ -8,18 +8,14 @@ namespace REST0.APIService.Descriptors
 {
     class Method
     {
-        [JsonProperty("name")]
+        public Service Service { get; set; }
         public string Name { get; set; }
-        [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
         public string DeprecatedMessage { get; set; }
-        [JsonProperty("parameterTypes")]
         public IDictionary<string, ParameterType> ParameterTypes { get; set; }
-        [JsonProperty("parameters")]
         public IDictionary<string, Parameter> Parameters { get; set; }
-        [JsonProperty("connection")]
         public string ConnectionString { get; set; }
-        [JsonProperty("query")]
         public Query Query { get; set; }
+        public List<string> Errors { get; set; }
 
         internal Method Clone()
         {
@@ -29,14 +25,16 @@ namespace REST0.APIService.Descriptors
                 ParameterTypes = new Dictionary<string, ParameterType>(this.ParameterTypes, StringComparer.OrdinalIgnoreCase),
                 Parameters = new Dictionary<string, Parameter>(this.Parameters, StringComparer.OrdinalIgnoreCase),
                 ConnectionString = this.ConnectionString,
-                Query = this.Query
+                Query = this.Query,
+                // Don't clone the errors:
+                Errors = new List<string>(5)
             };
         }
     }
 
     class MethodSerialized
     {
-        [JsonIgnore()]
+        [JsonIgnore]
         readonly Method desc;
 
         internal MethodSerialized(Method desc)
@@ -46,13 +44,41 @@ namespace REST0.APIService.Descriptors
 
         [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
         public string DeprecatedMessage { get { return desc.DeprecatedMessage; } }
-        [JsonProperty("parameters")]
-        public IDictionary<string, ParameterSerialized> Parameters { get { return desc.Parameters.ToDictionary(p => p.Key, p => new ParameterSerialized(p.Value), StringComparer.OrdinalIgnoreCase); } }
-        [JsonProperty("connection")]
+
+        [JsonProperty("parameters", NullValueHandling = NullValueHandling.Ignore)]
+        public IDictionary<string, ParameterSerialized> Parameters
+        {
+            get
+            {
+                if (desc.Parameters == null || desc.Parameters.Count == 0)
+                    return null;
+                return desc.Parameters.ToDictionary(p => p.Key, p => new ParameterSerialized(p.Value), StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
         public string ConnectionString { get { return desc.ConnectionString; } }
+
         [JsonProperty("sql", NullValueHandling = NullValueHandling.Ignore)]
-        public string SQL { get { return desc.Query.SQL; } }
+        public string SQL
+        {
+            get
+            {
+                if (desc.Query == null)
+                    return null;
+                return desc.Query.SQL;
+            }
+        }
+
         [JsonProperty("errors", NullValueHandling = NullValueHandling.Ignore)]
-        public List<string> Errors { get { return desc.Query.Errors; } }
+        public List<string> Errors
+        {
+            get
+            {
+                if (desc.Errors == null || desc.Errors.Count == 0)
+                    return null;
+                return desc.Errors;
+            }
+        }
     }
 }

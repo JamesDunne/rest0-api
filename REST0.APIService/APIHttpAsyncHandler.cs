@@ -124,6 +124,7 @@ namespace REST0.APIService
                 var joService = (JObject)jpService.Value;
 
                 // This property is a service:
+                var svcErrors = new List<string>(5);
 
                 Service baseService = null;
 
@@ -174,6 +175,7 @@ namespace REST0.APIService
                 Func<string, string> tokenLookup = (key) =>
                 {
                     string value;
+                    // TODO: add to a Warnings collection!
                     if (!tokens.TryGetValue(key, out value))
                         return null;
                     return value;
@@ -184,7 +186,7 @@ namespace REST0.APIService
                 if (jpConnection != null)
                 {
                     var joConnection = (JObject)jpConnection.Value;
-                    connectionString = parseConnection(jpService, joConnection, tokenLookup);
+                    connectionString = parseConnection(jpService, joConnection, svcErrors, (s) => s.Interpolate(tokenLookup));
                 }
 
                 // Parse the parameter types:
@@ -194,11 +196,14 @@ namespace REST0.APIService
                     parseParameterTypes(parameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
                 }
 
+                // Parse the methods:
                 var jpMethods = joService.Property("methods");
                 if (jpMethods != null)
                 {
-                    // Define all the methods:
-                    foreach (var jpMethod in ((JObject)jpMethods.Value).Properties())
+                    var joMethods = (JObject)jpMethods.Value;
+
+                    // Parse each method:
+                    foreach (var jpMethod in joMethods.Properties())
                     {
                         // Is the method set to null?
                         if (jpMethod.Value.Type == JTokenType.Null)
@@ -207,6 +212,7 @@ namespace REST0.APIService
                             methods.Remove(jpMethod.Name);
                             continue;
                         }
+
                         var joMethod = ((JObject)jpMethod.Value);
 
                         // Create a clone of the inherited descriptor or a new descriptor:
@@ -219,10 +225,13 @@ namespace REST0.APIService
                             {
                                 Name = jpMethod.Name,
                                 ParameterTypes = new Dictionary<string, ParameterType>(parameterTypes, StringComparer.OrdinalIgnoreCase),
-                                ConnectionString = connectionString
+                                ConnectionString = connectionString,
+                                Errors = new List<string>(5)
                             };
                         }
                         methods[jpMethod.Name] = method;
+
+                        Debug.Assert(method.Errors != null);
 
                         // Parse the definition:
 
@@ -233,7 +242,7 @@ namespace REST0.APIService
                         if (jpConnection != null)
                         {
                             var joConnection = (JObject)jpConnection.Value;
-                            connectionString = parseConnection(jpService, joConnection, tokenLookup);
+                            connectionString = parseConnection(jpService, joConnection, method.Errors, (s) => s.Interpolate(tokenLookup));
                         }
 
                         // Parse parameter types:
@@ -243,32 +252,43 @@ namespace REST0.APIService
                             parseParameterTypes(method.ParameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
                         }
 
+                        // Parse the parameters:
                         var jpParameters = joMethod.Property("parameters");
                         if (jpParameters != null)
                         {
-                            method.Parameters = new Dictionary<string, Parameter>(StringComparer.OrdinalIgnoreCase);
-                            foreach (var jpParam in ((JObject)jpParameters.Value).Properties())
+                            var joParameters = (JObject)jpParameters.Value;
+                            method.Parameters = new Dictionary<string, Parameter>(joParameters.Count, StringComparer.OrdinalIgnoreCase);
+                            foreach (var jpParam in joParameters.Properties())
                             {
-                                var joParam = ((JObject)jpParam.Value);
+                                var joParam = (JObject)jpParam.Value;
                                 var sqlName = getString(joParam.Property("sqlName")).Interpolate(tokenLookup);
+                                var sqlType = getString(joParam.Property("sqlType")).Interpolate(tokenLookup);
                                 var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
                                 var isOptional = getBool(joParam.Property("optional")) ?? false;
+
+                                ParameterType paramType = null;
+                                if (sqlType == null)
+                                {
+                                    if (!parameterTypes.TryGetValue(typeName, out paramType))
+                                    {
+                                        method.Errors.Add("Could not find parameter type '{0}' for parameter '{1}'".F(typeName, jpParam.Name));
+                                        continue;
+                                    }
+                                }
 
                                 var param = new Parameter()
                                 {
                                     Name = jpParam.Name,
                                     SqlName = sqlName,
-                                    Type = parameterTypes[typeName],
+                                    SqlType = sqlType,
+                                    Type = paramType,
                                     IsOptional = isOptional
                                 };
                                 method.Parameters.Add(jpParam.Name, param);
                             }
                         }
-                        else if (method.Parameters == null)
-                        {
-                            method.Parameters = new Dictionary<string, Parameter>(StringComparer.OrdinalIgnoreCase);
-                        }
 
+                        // Parse query:
                         var jpQuery = joMethod.Property("query");
                         if (jpQuery != null)
                         {
@@ -279,8 +299,7 @@ namespace REST0.APIService
                             var sql = getString(joQuery.Property("sql")).Interpolate(tokenLookup);
                             if (sql != null)
                             {
-                                // Raw SQL query; it must be a SELECT query but we can't validate that without
-                                // some nasty parsing.
+                                // Raw SQL query; it must be a SELECT query but we can't validate that without some nasty parsing.
 
                                 // Remove comments from the code and trim leading and trailing whitespace:
                                 sql = stripSQLComments(sql).Trim();
@@ -291,13 +310,12 @@ namespace REST0.APIService
                                 if (sql.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) ||
                                     sql.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) ||
                                     sql.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase) ||
+                                    sql.StartsWith("MERGE", StringComparison.OrdinalIgnoreCase) ||
                                     sql.StartsWith("DROP", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("CREATE", StringComparison.OrdinalIgnoreCase))
+                                    sql.StartsWith("CREATE", StringComparison.OrdinalIgnoreCase) ||
+                                    sql.StartsWith("ALTER", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    method.Query.Errors = new List<string>
-                                    {
-                                        "Query must be a SELECT query."
-                                    };
+                                    method.Errors.Add("Query must be a SELECT query.");
                                 }
                                 else
                                 {
@@ -306,19 +324,23 @@ namespace REST0.APIService
                             }
                             else
                             {
-                                // Parse the separated form of a query; this ensures that a SELECT query form is
-                                // constructed.
+                                // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
 
                                 // 'select' is required:
                                 method.Query.Select = getString(joQuery.Property("select")).Interpolate(tokenLookup);
+                                if (String.IsNullOrEmpty(method.Query.Select))
+                                {
+                                    method.Errors.Add("A `select` clause is required");
+                                }
+
                                 // The rest are optional:
                                 method.Query.From = getString(joQuery.Property("from")).Interpolate(tokenLookup);
                                 method.Query.Where = getString(joQuery.Property("where")).Interpolate(tokenLookup);
                                 method.Query.GroupBy = getString(joQuery.Property("groupBy")).Interpolate(tokenLookup);
                                 method.Query.Having = getString(joQuery.Property("having")).Interpolate(tokenLookup);
                                 method.Query.OrderBy = getString(joQuery.Property("orderBy")).Interpolate(tokenLookup);
-                                method.Query.CTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
-                                method.Query.CTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
+                                method.Query.WithCTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
+                                method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
 
                                 // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
                                 // TODO: Are xmlns namespace prefixes case-insensitive?
@@ -326,12 +348,14 @@ namespace REST0.APIService
                                 foreach (var jpXmlns in joQuery.Properties())
                                 {
                                     if (!jpXmlns.Name.StartsWith("xmlns:")) continue;
-                                    method.Query.XMLNamespaces.Add(jpXmlns.Name.Substring(6), getString(jpXmlns).Interpolate(tokenLookup));
+                                    var prefix = jpXmlns.Name.Substring(6);
+                                    var ns = getString(jpXmlns).Interpolate(tokenLookup);
+                                    method.Query.XMLNamespaces.Add(prefix, ns);
                                 }
 
                                 // Strip out all SQL comments:
-                                string withCTEidentifier = stripSQLComments(method.Query.CTEidentifier);
-                                string withCTEexpression = stripSQLComments(method.Query.CTEexpression);
+                                string withCTEidentifier = stripSQLComments(method.Query.WithCTEidentifier);
+                                string withCTEexpression = stripSQLComments(method.Query.WithCTEexpression);
                                 string select = stripSQLComments(method.Query.Select);
                                 string from = stripSQLComments(method.Query.From);
                                 string where = stripSQLComments(method.Query.Where);
@@ -351,27 +375,20 @@ namespace REST0.APIService
                                 );
 
                                 // This is a very conservative approach and will lead to false-positives for things like EXISTS() and sub-queries:
-                                var errors = new List<string>(6);
                                 if (containsSQLkeywords(select, "from", "into", "where", "group", "having", "order", "for"))
-                                    errors.Add("SELECT clause cannot contain FROM, INTO, WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
+                                    method.Errors.Add("SELECT clause cannot contain FROM, INTO, WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
                                 if (containsSQLkeywords(from, "where", "group", "having", "order", "for"))
-                                    errors.Add("FROM clause cannot contain WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
+                                    method.Errors.Add("FROM clause cannot contain WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
                                 if (containsSQLkeywords(where, "group", "having", "order", "for"))
-                                    errors.Add("WHERE clause cannot contain GROUP BY, HAVING, ORDER BY, or FOR");
+                                    method.Errors.Add("WHERE clause cannot contain GROUP BY, HAVING, ORDER BY, or FOR");
                                 if (containsSQLkeywords(groupBy, "having", "order", "for"))
-                                    errors.Add("GROUP BY clause cannot contain HAVING, ORDER BY, or FOR");
+                                    method.Errors.Add("GROUP BY clause cannot contain HAVING, ORDER BY, or FOR");
                                 if (containsSQLkeywords(having, "order", "for"))
-                                    errors.Add("HAVING clause cannot contain ORDER BY or FOR");
+                                    method.Errors.Add("HAVING clause cannot contain ORDER BY or FOR");
                                 if (containsSQLkeywords(orderBy, "for"))
-                                    errors.Add("ORDER BY clause cannot contain FOR");
+                                    method.Errors.Add("ORDER BY clause cannot contain FOR");
 
-                                if (errors.Count > 0)
-                                {
-                                    // No query for you.
-                                    method.Query.Errors = errors;
-                                    method.Query.SQL = null;
-                                }
-                                else
+                                if (method.Errors.Count == 0)
                                 {
                                     // Construct the query:
                                     bool didSemi = false;
@@ -384,15 +401,15 @@ namespace REST0.APIService
                                             {
                                                 var xmlns = en.Current;
                                                 qb.AppendFormat("  '{0}' AS {1}", xmlns.Value.Replace("\'", "\'\'"), xmlns.Key);
-                                                if (i < method.Query.XMLNamespaces.Count - 1) qb.AppendLine(",");
-                                                else qb.AppendLine();
+                                                if (i < method.Query.XMLNamespaces.Count - 1) qb.Append(",\r\n");
+                                                else qb.Append("\r\n");
                                             }
-                                        qb.AppendLine(")");
+                                        qb.Append(")\r\n");
                                     }
                                     if (!String.IsNullOrEmpty(withCTEidentifier) && !String.IsNullOrEmpty(withCTEexpression))
                                     {
                                         if (!didSemi) qb.Append(';');
-                                        qb.AppendFormat("WITH {0} AS ({1})\r\n", withCTEidentifier, withCTEexpression);
+                                        qb.AppendFormat("WITH {0} AS (\r\n{1}\r\n)\r\n", withCTEidentifier, withCTEexpression);
                                     }
                                     qb.AppendFormat("SELECT {0}", select);
                                     if (!String.IsNullOrEmpty(from)) qb.AppendFormat("\r\nFROM {0}", from);
@@ -401,19 +418,21 @@ namespace REST0.APIService
                                     if (!String.IsNullOrEmpty(having)) qb.AppendFormat("\r\nHAVING {0}", having);
                                     if (!String.IsNullOrEmpty(orderBy)) qb.AppendFormat("\r\nORDER BY {0}", orderBy);
 
+                                    // Assign the constructed query:
                                     method.Query.SQL = qb.ToString();
                                 }
                             }
                         }
-                        else if (method.Query == null)
+
+                        if (method.Query == null)
                         {
-                            method.Query = new Query();
+                            method.Errors.Add("No query specified");
                         }
                     }
                 }
 
                 // Create the service descriptor:
-                var desc = new Service()
+                var svc = new Service()
                 {
                     Name = jpService.Name,
                     BaseService = baseService,
@@ -423,8 +442,12 @@ namespace REST0.APIService
                     Tokens = tokens
                 };
 
+                // Assign each of our methods' Service property:
+                foreach (var m in methods.Values)
+                    m.Service = svc;
+
                 // Add the parsed service descriptor:
-                tmpServices.Add(jpService.Name, desc);
+                tmpServices.Add(jpService.Name, svc);
             }
 
             // 'aliases' section is optional:
@@ -446,42 +469,50 @@ namespace REST0.APIService
             return true;
         }
 
-        private static string parseConnection(JProperty jpService, JObject joConnection, Func<string, string> tokenLookup)
+        private static string parseConnection(JProperty jpService, JObject joConnection, List<string> errors, Func<string, string> interpolate)
         {
             var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
 
-            // Set the connection properties:
-            csb.DataSource = getString(joConnection.Property("dataSource")).Interpolate(tokenLookup);
-            csb.InitialCatalog = getString(joConnection.Property("initialCatalog")).Interpolate(tokenLookup);
-
-            var userID = getString(joConnection.Property("userID")).Interpolate(tokenLookup);
-            if (userID != null)
+            try
             {
-                csb.IntegratedSecurity = false;
-                csb.UserID = userID;
-                csb.Password = getString(joConnection.Property("password")).Interpolate(tokenLookup);
+                // Set the connection properties:
+                csb.DataSource = interpolate(getString(joConnection.Property("dataSource")));
+                csb.InitialCatalog = interpolate(getString(joConnection.Property("initialCatalog")));
+
+                var userID = interpolate(getString(joConnection.Property("userID")));
+                if (userID != null)
+                {
+                    csb.IntegratedSecurity = false;
+                    csb.UserID = userID;
+                    csb.Password = interpolate(getString(joConnection.Property("password")));
+                }
+                else csb.IntegratedSecurity = true;
+
+                // Connection pooling:
+                csb.Pooling = getBool(joConnection.Property("pooling")) ?? true;
+                csb.MaxPoolSize = getInt(joConnection.Property("maxPoolSize")) ?? 256;
+                csb.MinPoolSize = getInt(joConnection.Property("minPoolSize")) ?? 16;
+
+                // Default 10-second connection timeout:
+                csb.ConnectTimeout = getInt(joConnection.Property("connectTimeout")) ?? 10;
+                // 512 <= packetSize <= 32768
+                csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
+                //csb.WorkstationID = req.UserHostName;
+
+                // We must enable async processing:
+                csb.AsynchronousProcessing = true;
+                csb.ApplicationIntent = ApplicationIntent.ReadOnly;
+                // TODO: Sanitize the application name
+                csb.ApplicationName = jpService.Name.Replace(';', '/');
+
+                // Finalize the connection string and return it:
+                return csb.ToString();
             }
-            else csb.IntegratedSecurity = true;
-
-            // Connection pooling:
-            csb.Pooling = getBool(joConnection.Property("pooling")) ?? true;
-            csb.MaxPoolSize = getInt(joConnection.Property("maxPoolSize")) ?? 256;
-            csb.MinPoolSize = getInt(joConnection.Property("minPoolSize")) ?? 16;
-
-            // Default 10-second connection timeout:
-            csb.ConnectTimeout = getInt(joConnection.Property("connectTimeout")) ?? 10;
-            // 512 <= packetSize <= 32768
-            csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
-            //csb.WorkstationID = req.UserHostName;
-
-            // We must enable async processing:
-            csb.AsynchronousProcessing = true;
-            csb.ApplicationIntent = ApplicationIntent.ReadOnly;
-            // TODO: Sanitize the application name
-            csb.ApplicationName = jpService.Name.Replace(';', '/');
-
-            // Finalize the connection string:
-            return csb.ToString();
+            catch (Exception ex)
+            {
+                errors.Add("Invalid 'connection' object: {0}".F(ex.Message));
+                return null;
+            }
         }
 
         static void parseParameterTypes(IDictionary<string, ParameterType> parameterTypes, JObject joParameterTypes, Func<string, string> interpolate)
@@ -1028,9 +1059,14 @@ namespace REST0.APIService
 
         async Task<JsonResult> ExecuteQuery(HttpListenerRequest req, Method method)
         {
-            if (method.Query.SQL == null)
+            if (method.Errors.Count > 0)
             {
-                return new JsonResult(500, "Malformed query descriptor", method.Query.Errors);
+                return new JsonResult(500, "Bad method descriptor", new
+                {
+                    service = method.Service.Name,
+                    method = method.Name,
+                    errors = method.Errors
+                });
             }
 
             // Open a connection and execute the command:
@@ -1038,41 +1074,44 @@ namespace REST0.APIService
             using (var cmd = conn.CreateCommand())
             {
                 // Add parameters:
-                foreach (var param in method.Parameters)
+                if (method.Parameters != null)
                 {
-                    bool isValid = true;
-                    string message = null;
-                    object sqlValue;
-                    string rawValue = req.QueryString[param.Key];
+                    foreach (var param in method.Parameters)
+                    {
+                        bool isValid = true;
+                        string message = null;
+                        object sqlValue;
+                        string rawValue = req.QueryString[param.Key];
 
-                    if (param.Value.IsOptional & (rawValue == null))
-                    {
-                        sqlValue = DBNull.Value;
-                    }
-                    else
-                    {
-                        try
+                        if (param.Value.IsOptional & (rawValue == null))
                         {
-                            sqlValue = getSqlValue(param.Value.Type.Type, rawValue);
-                        }
-                        catch (Exception ex)
-                        {
-                            isValid = false;
                             sqlValue = DBNull.Value;
-                            message = ex.Message;
                         }
+                        else
+                        {
+                            try
+                            {
+                                sqlValue = getSqlValue(param.Value.Type.Type, rawValue);
+                            }
+                            catch (Exception ex)
+                            {
+                                isValid = false;
+                                sqlValue = DBNull.Value;
+                                message = ex.Message;
+                            }
+                        }
+
+                        if (!isValid) return new JsonResult(400, "Invalid parameter value");
+
+                        // Get the SQL type:
+                        var sqlType = getSqlType(param.Value.Type.Type);
+
+                        // Add the SQL parameter:
+                        var sqlprm = cmd.Parameters.Add(param.Value.Name, sqlType);
+                        if (param.Value.Type.Length != null) sqlprm.Precision = (byte)param.Value.Type.Length.Value;
+                        if (param.Value.Type.Scale != null) sqlprm.Scale = (byte)param.Value.Type.Scale.Value;
+                        sqlprm.SqlValue = sqlValue;
                     }
-
-                    if (!isValid) return new JsonResult(400, "Invalid parameter value");
-
-                    // Get the SQL type:
-                    var sqlType = getSqlType(param.Value.Type.Type);
-
-                    // Add the SQL parameter:
-                    var sqlprm = cmd.Parameters.Add(param.Value.Name, sqlType);
-                    if (param.Value.Type.Length != null) sqlprm.Precision = (byte)param.Value.Type.Length.Value;
-                    if (param.Value.Type.Scale != null) sqlprm.Scale = (byte)param.Value.Type.Scale.Value;
-                    sqlprm.SqlValue = sqlValue;
                 }
 
                 //cmd.CommandTimeout = 360;   // seconds
@@ -1240,11 +1279,14 @@ namespace REST0.APIService
                 // TODO: Is it deprecated?
 
                 // Check required parameters:
-                foreach (var param in method.Parameters)
+                if (method.Parameters != null)
                 {
-                    if (param.Value.IsOptional) continue;
-                    if (!req.QueryString.AllKeys.Contains(param.Key))
-                        return new JsonResponse(400, "Bad Request", new { success = false, message = "Missing required parameter '{0}'".F(param.Key) });
+                    foreach (var param in method.Parameters)
+                    {
+                        if (param.Value.IsOptional) continue;
+                        if (!req.QueryString.AllKeys.Contains(param.Key))
+                            return new JsonResponse(400, "Bad Request", new { success = false, message = "Missing required parameter '{0}'".F(param.Key) });
+                    }
                 }
 
                 // Execute the query:

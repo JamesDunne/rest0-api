@@ -8,14 +8,12 @@ namespace REST0.APIService.Descriptors
 {
     class Parameter
     {
-        [JsonProperty("name")]
         public string Name { get; set; }
-        [JsonProperty("sqlName")]
-        public string SqlName { get; set; }
-        [JsonProperty("type")]
-        public ParameterType Type { get; set; }
-        [JsonProperty("optional")]
         public bool IsOptional { get; set; }
+        public string SqlName { get; set; }
+        // Mutually exclusive:
+        public string SqlType { get; set; }
+        public ParameterType Type { get; set; }
     }
 
     class ParameterSerialized
@@ -28,11 +26,15 @@ namespace REST0.APIService.Descriptors
             this.desc = desc;
         }
 
-        [JsonProperty("sqlName")]
-        public string SqlName { get { return desc.SqlName; } }
-        [JsonProperty("type")]
-        public string Type { get { return desc.Type.Name; } }
         [JsonProperty("optional", NullValueHandling = NullValueHandling.Ignore)]
         public bool? IsOptional { get { return desc.IsOptional ? true : (bool?)null; } }
+
+        [JsonProperty("sqlName")]
+        public string SqlName { get { return desc.SqlName; } }
+
+        [JsonProperty("type", NullValueHandling = NullValueHandling.Ignore)]
+        public string Type { get { return desc.Type != null ? desc.Type.Name : null; } }
+        [JsonProperty("sqlType")]
+        public string SqlType { get { return desc.Type != null ? desc.Type.Type : desc.SqlType; } }
     }
 }
