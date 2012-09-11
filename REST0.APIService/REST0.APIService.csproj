@@ -68,7 +68,6 @@
     <Compile Include="HsonReader.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Descriptors\Connection.cs" />
     <Compile Include="Descriptors\Parameter.cs" />
     <Compile Include="Descriptors\Query.cs" />
     <Compile Include="Descriptors\Service.cs" />

@@ -53,15 +53,8 @@
             },
             // The shared DB connection for all methods (but may be overridden per method):
             "connection": {
-                // Data Source:
-                "ds": "(local)\\SQLEXPRESS",
-                // Initial Catalog:
-                "ic": "APITest"
-                // NOTE: If "uid" is missing, SSPI is assumed.
-                // User ID:
-                //"uid": "username"
-                // Password:
-                //"pwd": "password"
+                "dataSource":       "(local)\\SQLEXPRESS",
+                "initialCatalog":   "APITest"
             },
             // This is the main method definition section:
             "methods": {

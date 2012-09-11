@@ -75,6 +75,13 @@ namespace REST0.APIService
             return (bool?)((JValue)prop.Value).Value;
         }
 
+        static int? getInt(JProperty prop)
+        {
+            if (prop == null) return null;
+            if (prop.Value.Type == JTokenType.Null) return null;
+            return (int?)((JValue)prop.Value).Value;
+        }
+
         async Task<bool> RefreshConfigData()
         {
             // Get the latest config data:
@@ -118,7 +125,7 @@ namespace REST0.APIService
                 Service baseService = null;
 
                 IDictionary<string, string> tokens;
-                Connection conn;
+                string connectionString;
                 IDictionary<string, ParameterType> parameterTypes;
                 IDictionary<string, Method> methods;
 
@@ -135,25 +142,16 @@ namespace REST0.APIService
                     parameterTypes = new Dictionary<string, ParameterType>(baseService.ParameterTypes, StringComparer.OrdinalIgnoreCase);
                     methods = new Dictionary<string, Method>(baseService.Methods, StringComparer.OrdinalIgnoreCase);
 
-                    // Copy the connection descriptor:
-                    conn = new Connection()
-                    {
-                        DataSource = baseService.Connection.DataSource,
-                        InitialCatalog = baseService.Connection.InitialCatalog,
-                        UserID = baseService.Connection.UserID,
-                        Password = baseService.Connection.Password,
-                    };
-
                     // Recalculate the connection string:
-                    var csb = new SqlConnectionStringBuilder(baseService.Connection.ConnectionString);
+                    var csb = new SqlConnectionStringBuilder(baseService.ConnectionString);
                     // TODO: Sanitize the application name
                     csb.ApplicationName = jpService.Name.Replace(';', '/');
-                    conn.ConnectionString = csb.ToString();
+                    connectionString = csb.ToString();
                 }
                 else
                 {
                     // Nothing inherited:
-                    conn = null;
+                    connectionString = null;
                     tokens = new Dictionary<string, string>(rootTokens, StringComparer.OrdinalIgnoreCase);
                     parameterTypes = new Dictionary<string, ParameterType>(rootParameterTypes, StringComparer.OrdinalIgnoreCase);
                     methods = new Dictionary<string, Method>(StringComparer.OrdinalIgnoreCase);
@@ -182,54 +180,42 @@ namespace REST0.APIService
                 var jpConnection = joService.Property("connection");
                 if (jpConnection != null)
                 {
-                    // Completely override what has been inherited, if anything:
-                    conn = new Connection();
+                    var joConnection = (JObject)jpConnection.Value;
+
+                    var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
 
                     // Set the connection properties:
-                    foreach (var prop in ((JObject)jpConnection.Value).Properties())
-                        switch (prop.Name)
-                        {
-                            case "ds": conn.DataSource = getString(prop).Interpolate(tokenLookup); break;
-                            case "ic": conn.InitialCatalog = getString(prop).Interpolate(tokenLookup); break;
-                            case "uid": conn.UserID = getString(prop).Interpolate(tokenLookup); break;
-                            case "pwd": conn.Password = getString(prop).Interpolate(tokenLookup); break;
-                            default: break;
-                        }
+                    csb.DataSource = getString(joConnection.Property("dataSource")).Interpolate(tokenLookup);
+                    csb.InitialCatalog = getString(joConnection.Property("initialCatalog")).Interpolate(tokenLookup);
 
-                    // Build the final connection string:
+                    var userID = getString(joConnection.Property("userID")).Interpolate(tokenLookup);
+                    if (userID != null)
                     {
-                        var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
-
-                        csb.DataSource = conn.DataSource ?? String.Empty;
-                        csb.InitialCatalog = conn.InitialCatalog ?? String.Empty;
-
-                        string uid = conn.UserID;
-                        string pwd = conn.Password;
-                        if (uid != null && pwd != null)
-                        {
-                            csb.IntegratedSecurity = false;
-                            csb.UserID = uid;
-                            csb.Password = pwd;
-                        }
-                        else
-                        {
-                            csb.IntegratedSecurity = true;
-                        }
-
-                        // Enable async processing:
-                        csb.AsynchronousProcessing = true;
-                        // Max 5-second connection timeout:
-                        csb.ConnectTimeout = 5;
-                        // Some defaults:
-                        // TODO: Sanitize the application name
-                        csb.ApplicationName = jpService.Name.Replace(';', '/');
-                        // TODO(jsd): Tune this parameter
-                        csb.PacketSize = 32768;
-                        //csb.WorkstationID = req.UserHostName;
-
-                        // Finalize the connection string:
-                        conn.ConnectionString = csb.ToString();
+                        csb.IntegratedSecurity = false;
+                        csb.UserID = userID;
+                        csb.Password = getString(joConnection.Property("password")).Interpolate(tokenLookup);
                     }
+                    else csb.IntegratedSecurity = true;
+
+                    // Connection pooling:
+                    csb.Pooling = getBool(joConnection.Property("pooling")) ?? true;
+                    csb.MaxPoolSize = getInt(joConnection.Property("maxPoolSize")) ?? 256;
+                    csb.MinPoolSize = getInt(joConnection.Property("minPoolSize")) ?? 16;
+
+                    // Default 10-second connection timeout:
+                    csb.ConnectTimeout = getInt(joConnection.Property("connectTimeout")) ?? 10;
+                    // 512 <= packetSize <= 32768
+                    csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
+                    //csb.WorkstationID = req.UserHostName;
+
+                    // We must enable async processing:
+                    csb.AsynchronousProcessing = true;
+                    csb.ApplicationIntent = ApplicationIntent.ReadOnly;
+                    // TODO: Sanitize the application name
+                    csb.ApplicationName = jpService.Name.Replace(';', '/');
+
+                    // Finalize the connection string:
+                    connectionString = csb.ToString();
                 }
 
                 // Parse the parameter types:
@@ -260,7 +246,7 @@ namespace REST0.APIService
                             method = new Method()
                             {
                                 Name = jpMethod.Name,
-                                Connection = conn
+                                ConnectionString = connectionString
                             };
                         }
                         methods[jpMethod.Name] = method;
@@ -444,7 +430,7 @@ namespace REST0.APIService
                 {
                     Name = jpService.Name,
                     BaseService = baseService,
-                    Connection = conn,
+                    ConnectionString = connectionString,
                     ParameterTypes = parameterTypes,
                     Methods = methods,
                     Tokens = tokens
@@ -1016,7 +1002,7 @@ namespace REST0.APIService
             }
 
             // Open a connection and execute the command:
-            using (var conn = new System.Data.SqlClient.SqlConnection(method.Connection.ConnectionString))
+            using (var conn = new System.Data.SqlClient.SqlConnection(method.ConnectionString))
             using (var cmd = conn.CreateCommand())
             {
                 // Add parameters:

@@ -14,7 +14,7 @@ namespace REST0.APIService.Descriptors
         [JsonProperty("$")]
         public IDictionary<string, string> Tokens { get; set; }
         [JsonProperty("connection")]
-        public Connection Connection { get; set; }
+        public string ConnectionString { get; set; }
         [JsonProperty("parameterTypes")]
         public IDictionary<string, ParameterType> ParameterTypes { get; set; }
         [JsonProperty("methods")]
@@ -36,7 +36,7 @@ namespace REST0.APIService.Descriptors
         [JsonProperty("$", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, string> Tokens { get { return desc.Tokens; } }
         [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
-        public string Connection { get { return desc.Connection.ConnectionString; } }
+        public string ConnectionString { get { return desc.ConnectionString; } }
         [JsonProperty("parameterTypes", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, ParameterType> ParameterTypes
         {

@@ -15,7 +15,7 @@ namespace REST0.APIService.Descriptors
         [JsonProperty("parameters")]
         public IDictionary<string, Parameter> Parameters { get; set; }
         [JsonProperty("connection")]
-        public Connection Connection { get; set; }
+        public string ConnectionString { get; set; }
         [JsonProperty("query")]
         public Query Query { get; set; }
 
@@ -25,7 +25,7 @@ namespace REST0.APIService.Descriptors
             {
                 Name = this.Name,
                 Parameters = new Dictionary<string, Parameter>(this.Parameters, StringComparer.OrdinalIgnoreCase),
-                Connection = this.Connection,
+                ConnectionString = this.ConnectionString,
                 Query = this.Query
             };
         }
@@ -46,7 +46,7 @@ namespace REST0.APIService.Descriptors
         [JsonProperty("parameters")]
         public IDictionary<string, ParameterSerialized> Parameters { get { return desc.Parameters.ToDictionary(p => p.Key, p => new ParameterSerialized(p.Value), StringComparer.OrdinalIgnoreCase); } }
         [JsonProperty("connection")]
-        public string Connection { get { return desc.Connection.ConnectionString; } }
+        public string ConnectionString { get { return desc.ConnectionString; } }
         [JsonProperty("sql", NullValueHandling = NullValueHandling.Ignore)]
         public string SQL { get { return desc.Query.SQL; } }
         [JsonProperty("errors", NullValueHandling = NullValueHandling.Ignore)]
