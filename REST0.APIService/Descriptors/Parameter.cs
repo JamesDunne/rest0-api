@@ -9,8 +9,10 @@ namespace REST0.APIService.Descriptors
     class Parameter
     {
         public string Name { get; set; }
-        public bool IsOptional { get; set; }
         public string SqlName { get; set; }
+        public bool IsOptional { get; set; }
+        // `DBNull.Value` or a `System.Data.SqlTypes` object representing the default value.
+        public object DefaultValue { get; set; }
         // Mutually exclusive:
         public ParameterType SqlType { get; set; }
         public ParameterType Type { get; set; }

@@ -10,8 +10,12 @@ namespace REST0.APIService.Descriptors
     {
         [JsonProperty("name")]
         public string Name { get; set; }
+
         [JsonProperty("type")]
         public string TypeBase { get; set; }
+        [JsonIgnore]
+        public System.Data.SqlDbType SqlDbType { get; set; }
+
         [JsonProperty("length", NullValueHandling = NullValueHandling.Ignore)]
         public int? Length { get; set; }
         [JsonProperty("scale", NullValueHandling = NullValueHandling.Ignore)]

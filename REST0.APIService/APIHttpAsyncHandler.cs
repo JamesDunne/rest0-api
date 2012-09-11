@@ -275,7 +275,7 @@ namespace REST0.APIService
                         jpParameterTypes = joMethod.Property("parameterTypes");
                         if (jpParameterTypes != null)
                         {
-                    // Assigning a `null`?
+                            // Assigning a `null`?
                             if (jpParameterTypes.Value.Type == JTokenType.Null)
                             {
                                 // Clear out all inherited parameter types:
@@ -300,6 +300,7 @@ namespace REST0.APIService
                                 var sqlType = getString(joParam.Property("sqlType")).Interpolate(tokenLookup);
                                 var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
                                 var isOptional = getBool(joParam.Property("optional")) ?? false;
+                                object defaultValue = DBNull.Value;
 
                                 var param = new Parameter()
                                 {
@@ -329,6 +330,13 @@ namespace REST0.APIService
                                         continue;
                                     }
                                     param.Type = paramType;
+                                }
+
+                                var jpDefault = joParam.Property("default");
+                                if (jpDefault != null && isOptional)
+                                {
+                                    // Parse the default value into a SqlValue:
+                                    param.DefaultValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
                                 }
 
                                 method.Parameters.Add(jpParam.Name, param);
@@ -504,7 +512,40 @@ namespace REST0.APIService
             return true;
         }
 
-        private static string parseConnection(JObject joConnection, List<string> errors, Func<string, string> interpolate)
+        static object jsonToSqlValue(JToken jToken, ParameterType targetType)
+        {
+            switch (jToken.Type)
+            {
+                case JTokenType.String:
+                    return new System.Data.SqlTypes.SqlString((string)jToken);
+                case JTokenType.Boolean:
+                    return new System.Data.SqlTypes.SqlBoolean((bool)jToken);
+                case JTokenType.Integer:
+                    switch (targetType.SqlDbType)
+                    {
+                        case System.Data.SqlDbType.Int: return new System.Data.SqlTypes.SqlInt32((int)jToken);
+                        case System.Data.SqlDbType.BigInt: return new System.Data.SqlTypes.SqlInt64((long)jToken);
+                        case System.Data.SqlDbType.SmallInt: return new System.Data.SqlTypes.SqlInt16((short)jToken);
+                        case System.Data.SqlDbType.TinyInt: return new System.Data.SqlTypes.SqlByte((byte)(int)jToken);
+                        case System.Data.SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
+                        default: return new System.Data.SqlTypes.SqlInt32((int)jToken);
+                    }
+                case JTokenType.Float:
+                    switch (targetType.SqlDbType)
+                    {
+                        case System.Data.SqlDbType.Float: return new System.Data.SqlTypes.SqlDouble((double)jToken);
+                        case System.Data.SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
+                        default: return new System.Data.SqlTypes.SqlDouble((double)jToken);
+                    }
+                case JTokenType.Null:
+                    return DBNull.Value;
+                // Not really much else here to support.
+                default:
+                    throw new Exception("Unsupported JSON token type {0}".F(jToken.Type));
+            }
+        }
+
+        static string parseConnection(JObject joConnection, List<string> errors, Func<string, string> interpolate)
         {
             var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
 
@@ -590,12 +631,13 @@ namespace REST0.APIService
                 var type = interpolate(getString(jpType));
                 int? length;
                 int? scale;
-                var typeBase = parseSqlType(type, out length, out scale);
+                var typeBase = parseSqlType(type, out length, out scale).ToLowerInvariant();
 
                 parameterTypes[jpParam.Name] = new ParameterType()
                 {
                     Name = jpParam.Name,
                     TypeBase = typeBase,
+                    SqlDbType = getSqlType(typeBase),
                     Length = length,
                     Scale = scale,
                 };
@@ -1006,9 +1048,9 @@ namespace REST0.APIService
             return new JsonResult(statusCode, message, errorData);
         }
 
-        static System.Data.SqlDbType getSqlType(string type)
+        static System.Data.SqlDbType getSqlType(string typeBase)
         {
-            switch (type)
+            switch (typeBase)
             {
                 case "int": return System.Data.SqlDbType.Int;
                 case "bit": return System.Data.SqlDbType.Bit;
@@ -1126,7 +1168,8 @@ namespace REST0.APIService
 
                         if (param.Value.IsOptional & (rawValue == null))
                         {
-                            sqlValue = DBNull.Value;
+                            // Use the default value if the parameter is optional and is not specified on the query-string:
+                            sqlValue = param.Value.DefaultValue;
                         }
                         else
                         {
@@ -1142,7 +1185,10 @@ namespace REST0.APIService
                             }
                         }
 
-                        if (!isValid) return new JsonResult(400, "Invalid parameter value");
+                        if (!isValid) return new JsonResult(400, "Invalid parameter value", new
+                        {
+                            parameter = param.Key
+                        });
 
                         // Get the SQL type:
                         var sqlType = getSqlType(param.Value.Type.TypeBase);
@@ -1243,7 +1289,7 @@ namespace REST0.APIService
 
             // GET requests only:
             if (req.HttpMethod != "GET")
-                return new JsonResponse(405, "Method Not Allowed", new { success = false });
+                return new JsonResult(405, "Method Not Allowed");
 
             // Capture the current service configuration values only once per connection in case they update during:
             var services = this.services;
@@ -1258,7 +1304,7 @@ namespace REST0.APIService
             if (path.Length == 0)
             {
                 // TODO: some descriptive information here.
-                return new JsonResponse(200, "OK", new { success = true, message = String.Empty });
+                return new JsonResult(new { });
             }
 
             if (path[0] == "meta")
@@ -1266,10 +1312,8 @@ namespace REST0.APIService
                 if (path.Length == 1)
                 {
                     // Report all service descriptors:
-                    return new JsonResponse(200, "OK", new
+                    return new JsonResult(new
                     {
-                        success = true,
-                        statusCode = 200,
                         hash = services.HashHexString,
                         services = services.Value.Keys
                     });
@@ -1280,35 +1324,37 @@ namespace REST0.APIService
 
                 Service desc;
                 if (!services.Value.TryGetValue(serviceName, out desc))
-                    return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown service name '{0}'".F(serviceName) });
+                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                    {
+                        service = serviceName
+                    });
 
                 if (path.Length == 2)
                 {
                     // Report this service descriptor:
-                    return new JsonResponse(200, "OK", new
+                    return new JsonResult(new
                     {
-                        success = true,
-                        statusCode = 200,
                         hash = services.HashHexString,
                         service = new ServiceSerialized(desc, inclName: true, onlyMethodNames: true)
                     });
                 }
                 if (path.Length > 3)
                 {
-                    return new JsonResponse(400, "Bad Request", new { success = false, message = "Too many path components supplied" });
+                    return new JsonResult(400, "Too many path components supplied");
                 }
 
                 // Find method:
                 string methodName = path[2];
                 Method method;
                 if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown method name '{0}'".F(methodName) });
+                    return new JsonResult(400, "Unknown method name '{0}'".F(methodName), new
+                    {
+                        method = methodName
+                    });
 
                 // Report this method descriptor:
-                return new JsonResponse(200, "OK", new
+                return new JsonResult(new
                 {
-                    success = true,
-                    statusCode = 200,
                     hash = services.HashHexString,
                     service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
                     method = new MethodSerialized(method, inclMethodName: true)
@@ -1326,7 +1372,10 @@ namespace REST0.APIService
 
                 Service desc;
                 if (!services.Value.TryGetValue(serviceName, out desc))
-                    return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown service name '{0}'".F(serviceName) });
+                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                    {
+                        service = serviceName
+                    });
 
                 if (path.Length == 2)
                 {
@@ -1334,14 +1383,17 @@ namespace REST0.APIService
                 }
                 if (path.Length > 3)
                 {
-                    return new JsonResponse(400, "Bad Request", new { success = false, message = "Too many path components supplied" });
+                    return new JsonResult(400, "Too many path components supplied");
                 }
 
                 // Find method:
                 string methodName = path[2];
                 Method method;
                 if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown method name '{0}'".F(methodName) });
+                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
+                    {
+                        method = methodName
+                    });
 
                 // TODO: Is it deprecated?
 
@@ -1352,18 +1404,20 @@ namespace REST0.APIService
                     {
                         if (param.Value.IsOptional) continue;
                         if (!req.QueryString.AllKeys.Contains(param.Key))
-                            return new JsonResponse(400, "Bad Request", new { success = false, message = "Missing required parameter '{0}'".F(param.Key) });
+                            return new JsonResult(400, "Missing required parameter '{0}'".F(param.Key), new
+                            {
+                                parameter = param.Key
+                            });
                     }
                 }
 
                 // Execute the query:
-                var response = await ExecuteQuery(req, method);
-
-                return new JsonResponse(response.statusCode, "OK", response);
+                var result = await ExecuteQuery(req, method);
+                return result;
             }
             else
             {
-                return new JsonResponse(400, "Bad Request", new { success = false, message = "Unknown request type '{0}'".F(path[0]) });
+                return new JsonResult(400, "Unknown request type '{0}'".F(path[0]));
             }
         }
 

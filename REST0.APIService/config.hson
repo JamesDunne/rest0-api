@@ -78,8 +78,9 @@
                 },
                 "Test": {
                     "parameters": {
-                        // Add `"optional": true` to make a parameter optional; its default value will be NULL in that case.
-                        "test":     { "sqlName": "@test",   "type": "Grade",    "optional": true }
+                        // Add `"optional": true` to make a parameter optional; its default value will be the value of
+                        // the "default" property (if it exists) or `null`.
+                        "test":     { "sqlName": "@test",   "type": "Grade",    "optional": true, "default": 10 }
                     },
                     "query": {
                         "select":   "@test AS Test"
