@@ -146,11 +146,7 @@ namespace REST0.APIService
                     parameterTypes = new Dictionary<string, ParameterType>(baseService.ParameterTypes, StringComparer.OrdinalIgnoreCase);
                     methods = new Dictionary<string, Method>(baseService.Methods, StringComparer.OrdinalIgnoreCase);
 
-                    // Recalculate the connection string:
-                    var csb = new SqlConnectionStringBuilder(baseService.ConnectionString);
-                    // TODO: Sanitize the application name
-                    csb.ApplicationName = jpService.Name.Replace(';', '/');
-                    connectionString = csb.ToString();
+                    connectionString = baseService.ConnectionString;
                 }
                 else
                 {
@@ -195,7 +191,7 @@ namespace REST0.APIService
                 if (jpConnection != null)
                 {
                     var joConnection = (JObject)jpConnection.Value;
-                    connectionString = parseConnection(jpService, joConnection, svcErrors, (s) => s.Interpolate(tokenLookup));
+                    connectionString = parseConnection(joConnection, svcErrors, (s) => s.Interpolate(tokenLookup));
                 }
 
                 // Parse the parameter types:
@@ -272,7 +268,7 @@ namespace REST0.APIService
                         if (jpConnection != null)
                         {
                             var joConnection = (JObject)jpConnection.Value;
-                            connectionString = parseConnection(jpService, joConnection, method.Errors, (s) => s.Interpolate(tokenLookup));
+                            connectionString = parseConnection(joConnection, method.Errors, (s) => s.Interpolate(tokenLookup));
                         }
 
                         // Parse parameter types:
@@ -508,7 +504,7 @@ namespace REST0.APIService
             return true;
         }
 
-        private static string parseConnection(JProperty jpService, JObject joConnection, List<string> errors, Func<string, string> interpolate)
+        private static string parseConnection(JObject joConnection, List<string> errors, Func<string, string> interpolate)
         {
             var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
 
@@ -536,13 +532,10 @@ namespace REST0.APIService
                 csb.ConnectTimeout = getInt(joConnection.Property("connectTimeout")) ?? 10;
                 // 512 <= packetSize <= 32768
                 csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
-                //csb.WorkstationID = req.UserHostName;
 
                 // We must enable async processing:
                 csb.AsynchronousProcessing = true;
                 csb.ApplicationIntent = ApplicationIntent.ReadOnly;
-                // TODO: Sanitize the application name
-                csb.ApplicationName = jpService.Name.Replace(';', '/');
 
                 // Finalize the connection string and return it:
                 return csb.ToString();
@@ -1170,6 +1163,7 @@ namespace REST0.APIService
                 //    cmd.CommandText += "SET ROWCOUNT {0};".F(rowLimit) + Environment.NewLine;
                 cmd.CommandText += method.Query.SQL;
 
+                // Stopwatches used for precise timing:
                 Stopwatch swOpenTime, swExecTime, swReadTime;
 
                 swOpenTime = Stopwatch.StartNew();
@@ -1215,9 +1209,9 @@ namespace REST0.APIService
                     {
                         service = method.Service.Name,
                         method = method.Name,
-                        openTime = swOpenTime.ElapsedMilliseconds,
-                        execTime = swExecTime.ElapsedMilliseconds,
-                        readTime = swReadTime.ElapsedMilliseconds
+                        openMsec = Math.Round(swOpenTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
+                        execMsec = Math.Round(swExecTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
+                        readMsec = Math.Round(swReadTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2)
                     };
                     return new JsonResult(result, meta);
                 }
@@ -1296,7 +1290,7 @@ namespace REST0.APIService
                         success = true,
                         statusCode = 200,
                         hash = services.HashHexString,
-                        service = new ServiceSerialized(desc, onlyMethodNames: true)
+                        service = new ServiceSerialized(desc, inclName: true, onlyMethodNames: true)
                     });
                 }
                 if (path.Length > 3)
@@ -1317,7 +1311,7 @@ namespace REST0.APIService
                     statusCode = 200,
                     hash = services.HashHexString,
                     service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
-                    method = new MethodSerialized(method)
+                    method = new MethodSerialized(method, inclMethodName: true)
                 });
             }
             else if (path[0] == "data")

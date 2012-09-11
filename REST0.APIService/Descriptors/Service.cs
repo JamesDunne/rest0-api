@@ -92,7 +92,7 @@ namespace REST0.APIService.Descriptors
                 {
                     return desc.Methods.ToDictionary(
                         m => m.Key,
-                        m => RestfulLink.Create("child", "/meta/{0}/{1}".F(desc.Name, m.Value.Name))
+                        m => RestfulLink.Create("child", "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name))
                     );
                 }
 
@@ -101,7 +101,7 @@ namespace REST0.APIService.Descriptors
                     m => m.Key,
                     m => (RestfulLink) RestfulLink.Create(
                         "child",
-                        "/meta/{0}/{1}".F(desc.Name, m.Value.Name),
+                        "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name),
                         new MethodSerialized(m.Value)
                     ),
                     StringComparer.OrdinalIgnoreCase

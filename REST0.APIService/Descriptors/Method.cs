@@ -37,12 +37,22 @@ namespace REST0.APIService.Descriptors
         [JsonIgnore]
         readonly Method desc;
         [JsonIgnore]
-        readonly bool elideDupeConnectionString;
+        readonly bool inclMethodName;
 
-        internal MethodSerialized(Method desc, bool elideDupeConnectionString = true)
+        internal MethodSerialized(Method desc, bool inclMethodName = false)
         {
             this.desc = desc;
-            this.elideDupeConnectionString = elideDupeConnectionString;
+            this.inclMethodName = inclMethodName;
+        }
+
+        [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
+        public string Name
+        {
+            get
+            {
+                if (!inclMethodName) return null;
+                return desc.Name;
+            }
         }
 
         [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
@@ -60,14 +70,7 @@ namespace REST0.APIService.Descriptors
         }
 
         [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
-        public string ConnectionString
-        {
-            get
-            {
-                if (elideDupeConnectionString && desc.ConnectionString == desc.Service.ConnectionString) return null;
-                return desc.ConnectionString;
-            }
-        }
+        public string ConnectionString { get { return desc.ConnectionString; } }
 
         [JsonProperty("sql", NullValueHandling = NullValueHandling.Ignore)]
         public string SQL
