@@ -59,7 +59,7 @@ namespace REST0.APIService
 
         #endregion
 
-        #region Dealing with remote-fetch of configuration data
+        #region Parsing JSON configuration
 
         static string getString(JProperty prop)
         {
@@ -106,7 +106,10 @@ namespace REST0.APIService
             // Parse root parameter types:
             var rootParameterTypes = new Dictionary<string, ParameterType>(StringComparer.OrdinalIgnoreCase);
             var jpParameterTypes = doc.Property("parameterTypes");
-            parseParameterTypes(rootParameterTypes, (s) => s, jpParameterTypes);
+            if (jpParameterTypes != null)
+            {
+                parseParameterTypes(rootParameterTypes, (JObject)jpParameterTypes.Value, (s) => s);
+            }
 
             // 'services' section is not optional:
             JToken jtServices;
@@ -167,7 +170,7 @@ namespace REST0.APIService
                         tokens[prop.Name] = getString(prop);
                 }
 
-                // A lookup-or-null function used with `interpolate`:
+                // A lookup-or-null function used with `Interpolate`:
                 Func<string, string> tokenLookup = (key) =>
                 {
                     string value;
@@ -181,46 +184,15 @@ namespace REST0.APIService
                 if (jpConnection != null)
                 {
                     var joConnection = (JObject)jpConnection.Value;
-
-                    var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
-
-                    // Set the connection properties:
-                    csb.DataSource = getString(joConnection.Property("dataSource")).Interpolate(tokenLookup);
-                    csb.InitialCatalog = getString(joConnection.Property("initialCatalog")).Interpolate(tokenLookup);
-
-                    var userID = getString(joConnection.Property("userID")).Interpolate(tokenLookup);
-                    if (userID != null)
-                    {
-                        csb.IntegratedSecurity = false;
-                        csb.UserID = userID;
-                        csb.Password = getString(joConnection.Property("password")).Interpolate(tokenLookup);
-                    }
-                    else csb.IntegratedSecurity = true;
-
-                    // Connection pooling:
-                    csb.Pooling = getBool(joConnection.Property("pooling")) ?? true;
-                    csb.MaxPoolSize = getInt(joConnection.Property("maxPoolSize")) ?? 256;
-                    csb.MinPoolSize = getInt(joConnection.Property("minPoolSize")) ?? 16;
-
-                    // Default 10-second connection timeout:
-                    csb.ConnectTimeout = getInt(joConnection.Property("connectTimeout")) ?? 10;
-                    // 512 <= packetSize <= 32768
-                    csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
-                    //csb.WorkstationID = req.UserHostName;
-
-                    // We must enable async processing:
-                    csb.AsynchronousProcessing = true;
-                    csb.ApplicationIntent = ApplicationIntent.ReadOnly;
-                    // TODO: Sanitize the application name
-                    csb.ApplicationName = jpService.Name.Replace(';', '/');
-
-                    // Finalize the connection string:
-                    connectionString = csb.ToString();
+                    connectionString = parseConnection(jpService, joConnection, tokenLookup);
                 }
 
                 // Parse the parameter types:
                 jpParameterTypes = joService.Property("parameterTypes");
-                parseParameterTypes(parameterTypes, (s) => s.Interpolate(tokenLookup), jpParameterTypes);
+                if (jpParameterTypes != null)
+                {
+                    parseParameterTypes(parameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                }
 
                 var jpMethods = joService.Property("methods");
                 if (jpMethods != null)
@@ -246,15 +218,30 @@ namespace REST0.APIService
                             method = new Method()
                             {
                                 Name = jpMethod.Name,
+                                ParameterTypes = new Dictionary<string, ParameterType>(parameterTypes, StringComparer.OrdinalIgnoreCase),
                                 ConnectionString = connectionString
                             };
                         }
                         methods[jpMethod.Name] = method;
 
                         // Parse the definition:
+
                         method.DeprecatedMessage = getString(joMethod.Property("deprecated")).Interpolate(tokenLookup);
 
-                        // TODO: parse "connection"
+                        // Parse connection:
+                        jpConnection = joMethod.Property("connection");
+                        if (jpConnection != null)
+                        {
+                            var joConnection = (JObject)jpConnection.Value;
+                            connectionString = parseConnection(jpService, joConnection, tokenLookup);
+                        }
+
+                        // Parse parameter types:
+                        jpParameterTypes = joMethod.Property("parameterTypes");
+                        if (jpParameterTypes != null)
+                        {
+                            parseParameterTypes(method.ParameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                        }
 
                         var jpParameters = joMethod.Property("parameters");
                         if (jpParameters != null)
@@ -459,48 +446,93 @@ namespace REST0.APIService
             return true;
         }
 
-        static void parseParameterTypes(IDictionary<string, ParameterType> parameterTypes, Func<string, string> interpolate, JProperty jpParameterTypes)
+        private static string parseConnection(JProperty jpService, JObject joConnection, Func<string, string> tokenLookup)
         {
-            if (jpParameterTypes != null)
+            var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
+
+            // Set the connection properties:
+            csb.DataSource = getString(joConnection.Property("dataSource")).Interpolate(tokenLookup);
+            csb.InitialCatalog = getString(joConnection.Property("initialCatalog")).Interpolate(tokenLookup);
+
+            var userID = getString(joConnection.Property("userID")).Interpolate(tokenLookup);
+            if (userID != null)
             {
-                // Define all the parameter types:
-                foreach (var jpParam in ((JObject)jpParameterTypes.Value).Properties())
+                csb.IntegratedSecurity = false;
+                csb.UserID = userID;
+                csb.Password = getString(joConnection.Property("password")).Interpolate(tokenLookup);
+            }
+            else csb.IntegratedSecurity = true;
+
+            // Connection pooling:
+            csb.Pooling = getBool(joConnection.Property("pooling")) ?? true;
+            csb.MaxPoolSize = getInt(joConnection.Property("maxPoolSize")) ?? 256;
+            csb.MinPoolSize = getInt(joConnection.Property("minPoolSize")) ?? 16;
+
+            // Default 10-second connection timeout:
+            csb.ConnectTimeout = getInt(joConnection.Property("connectTimeout")) ?? 10;
+            // 512 <= packetSize <= 32768
+            csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
+            //csb.WorkstationID = req.UserHostName;
+
+            // We must enable async processing:
+            csb.AsynchronousProcessing = true;
+            csb.ApplicationIntent = ApplicationIntent.ReadOnly;
+            // TODO: Sanitize the application name
+            csb.ApplicationName = jpService.Name.Replace(';', '/');
+
+            // Finalize the connection string:
+            return csb.ToString();
+        }
+
+        static void parseParameterTypes(IDictionary<string, ParameterType> parameterTypes, JObject joParameterTypes, Func<string, string> interpolate)
+        {
+            foreach (var jpParam in joParameterTypes.Properties())
+            {
+                // Null assignments cause removal:
+                if (jpParam.Value.Type == JTokenType.Null)
                 {
-                    var jpType = ((JObject)jpParam.Value).Property("type");
+                    parameterTypes.Remove(jpParam.Name);
+                    continue;
+                }
 
-                    var type = interpolate(getString(jpType));
-                    int? length = null;
-                    int? scale = null;
+                var jpType = ((JObject)jpParam.Value).Property("type");
 
-                    int idx = type.LastIndexOf('(');
-                    if (idx != -1)
+                var type = interpolate(getString(jpType));
+                int? length = null;
+                int? scale = null;
+
+                int idx = type.LastIndexOf('(');
+                if (idx != -1)
+                {
+                    Debug.Assert(type[type.Length - 1] == ')');
+
+                    int comma = type.LastIndexOf(',');
+                    if (comma == -1)
                     {
-                        Debug.Assert(type[type.Length - 1] == ')');
-
-                        int comma = type.LastIndexOf(',');
-                        if (comma == -1)
-                        {
-                            length = Int32.Parse(type.Substring(idx + 1, type.Length - idx - 2));
-                        }
-                        else
-                        {
-                            length = Int32.Parse(type.Substring(idx + 1, comma - idx - 1));
-                            scale = Int32.Parse(type.Substring(comma + 1, type.Length - comma - 2));
-                        }
-
-                        type = type.Substring(0, idx);
+                        length = Int32.Parse(type.Substring(idx + 1, type.Length - idx - 2));
+                    }
+                    else
+                    {
+                        length = Int32.Parse(type.Substring(idx + 1, comma - idx - 1));
+                        scale = Int32.Parse(type.Substring(comma + 1, type.Length - comma - 2));
                     }
 
-                    parameterTypes[jpParam.Name] = new ParameterType()
-                    {
-                        Name = jpParam.Name,
-                        Type = type,
-                        Length = length,
-                        Scale = scale,
-                    };
+                    type = type.Substring(0, idx);
                 }
+
+                parameterTypes[jpParam.Name] = new ParameterType()
+                {
+                    Name = jpParam.Name,
+                    Type = type,
+                    Length = length,
+                    Scale = scale,
+                };
             }
         }
+
+        #endregion
+
+        #region Loading configuration
 
         SHA1Hashed<JObject> ReadJSONStream(Stream input)
         {

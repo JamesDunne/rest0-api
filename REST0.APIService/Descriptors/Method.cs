@@ -12,6 +12,8 @@ namespace REST0.APIService.Descriptors
         public string Name { get; set; }
         [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
         public string DeprecatedMessage { get; set; }
+        [JsonProperty("parameterTypes")]
+        public IDictionary<string, ParameterType> ParameterTypes { get; set; }
         [JsonProperty("parameters")]
         public IDictionary<string, Parameter> Parameters { get; set; }
         [JsonProperty("connection")]
@@ -24,6 +26,7 @@ namespace REST0.APIService.Descriptors
             return new Method()
             {
                 Name = this.Name,
+                ParameterTypes = new Dictionary<string, ParameterType>(this.ParameterTypes, StringComparer.OrdinalIgnoreCase),
                 Parameters = new Dictionary<string, Parameter>(this.Parameters, StringComparer.OrdinalIgnoreCase),
                 ConnectionString = this.ConnectionString,
                 Query = this.Query
