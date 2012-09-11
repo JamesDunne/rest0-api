@@ -11,6 +11,7 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using REST0.APIService.Descriptors;
+using System.Data;
 
 #pragma warning disable 1998
 
@@ -30,23 +31,28 @@ namespace REST0.APIService
             return true;
         }
 
+        /// <summary>
+        /// Refresh configuration on every N-second mark on the clock.
+        /// </summary>
+        const int refreshInterval = 10;
+
         public async Task<bool> Initialize(IHttpAsyncHostHandlerContext context)
         {
             // Initialize gets called after Configure.
             if (!await RefreshConfigData())
                 return false;
 
-            // Let a background task refresh the config data every 30 seconds:
+            // Let a background task refresh the config data every N seconds:
 #pragma warning disable 4014
             Task.Run(async () =>
             {
                 while (true)
                 {
-                    // Wait until the next even 30-second mark on the clock:
-                    const long sec30 = TimeSpan.TicksPerSecond * 30;
+                    // Wait until the next even N-second mark on the clock:
+                    const long secN = TimeSpan.TicksPerSecond * refreshInterval;
                     var now = DateTime.UtcNow;
-                    var next30 = new DateTime(((now.Ticks + sec30) / sec30) * sec30, DateTimeKind.Utc);
-                    await Task.Delay(next30.Subtract(now));
+                    var nextN = new DateTime(((now.Ticks + secN) / secN) * secN, DateTimeKind.Utc);
+                    await Task.Delay(nextN.Subtract(now));
 
                     // Refresh config data:
                     await RefreshConfigData();
@@ -108,7 +114,13 @@ namespace REST0.APIService
             var jpParameterTypes = doc.Property("parameterTypes");
             if (jpParameterTypes != null)
             {
-                parseParameterTypes(rootParameterTypes, (JObject)jpParameterTypes.Value, (s) => s);
+                var errors = new List<string>(5);
+                parseParameterTypes((JObject)jpParameterTypes.Value, errors, rootParameterTypes, (s) => s);
+                if (errors.Count > 0)
+                {
+                    // TODO: what now??
+                    throw new Exception();
+                }
             }
 
             // 'services' section is not optional:
@@ -206,7 +218,7 @@ namespace REST0.APIService
                     }
                     else
                     {
-                        parseParameterTypes(parameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                        parseParameterTypes((JObject)jpParameterTypes.Value, svcErrors, parameterTypes, (s) => s.Interpolate(tokenLookup));
                     }
                 }
 
@@ -283,7 +295,7 @@ namespace REST0.APIService
                             }
                             else
                             {
-                                parseParameterTypes(method.ParameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                                parseParameterTypes((JObject)jpParameterTypes.Value, method.Errors, method.ParameterTypes, (s) => s.Interpolate(tokenLookup));
                             }
                         }
 
@@ -292,6 +304,11 @@ namespace REST0.APIService
                         if (jpParameters != null)
                         {
                             var joParameters = (JObject)jpParameters.Value;
+
+                            // Keep track of unique SQL parameter names:
+                            var sqlNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            
+                            // Parse parameter properties:
                             method.Parameters = new Dictionary<string, Parameter>(joParameters.Count, StringComparer.OrdinalIgnoreCase);
                             foreach (var jpParam in joParameters.Properties())
                             {
@@ -301,6 +318,15 @@ namespace REST0.APIService
                                 var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
                                 var isOptional = getBool(joParam.Property("optional")) ?? false;
                                 object defaultValue = DBNull.Value;
+
+                                // Assign a default `sqlName` if null:
+                                if (sqlName == null) sqlName = "@" + jpParam.Name;
+                                // TODO: validate sqlName is valid SQL parameter identifier!
+
+                                if (sqlNames.Contains(sqlName))
+                                {
+                                    method.Errors.Add("Duplicate SQL parameter name (`sqlName`): '{0}'".F(sqlName));
+                                }
 
                                 var param = new Parameter()
                                 {
@@ -523,18 +549,18 @@ namespace REST0.APIService
                 case JTokenType.Integer:
                     switch (targetType.SqlDbType)
                     {
-                        case System.Data.SqlDbType.Int: return new System.Data.SqlTypes.SqlInt32((int)jToken);
-                        case System.Data.SqlDbType.BigInt: return new System.Data.SqlTypes.SqlInt64((long)jToken);
-                        case System.Data.SqlDbType.SmallInt: return new System.Data.SqlTypes.SqlInt16((short)jToken);
-                        case System.Data.SqlDbType.TinyInt: return new System.Data.SqlTypes.SqlByte((byte)(int)jToken);
-                        case System.Data.SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
+                        case SqlDbType.Int: return new System.Data.SqlTypes.SqlInt32((int)jToken);
+                        case SqlDbType.BigInt: return new System.Data.SqlTypes.SqlInt64((long)jToken);
+                        case SqlDbType.SmallInt: return new System.Data.SqlTypes.SqlInt16((short)jToken);
+                        case SqlDbType.TinyInt: return new System.Data.SqlTypes.SqlByte((byte)(int)jToken);
+                        case SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
                         default: return new System.Data.SqlTypes.SqlInt32((int)jToken);
                     }
                 case JTokenType.Float:
                     switch (targetType.SqlDbType)
                     {
-                        case System.Data.SqlDbType.Float: return new System.Data.SqlTypes.SqlDouble((double)jToken);
-                        case System.Data.SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
+                        case SqlDbType.Float: return new System.Data.SqlTypes.SqlDouble((double)jToken);
+                        case SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
                         default: return new System.Data.SqlTypes.SqlDouble((double)jToken);
                     }
                 case JTokenType.Null:
@@ -615,7 +641,7 @@ namespace REST0.APIService
             return type;
         }
 
-        static void parseParameterTypes(IDictionary<string, ParameterType> parameterTypes, JObject joParameterTypes, Func<string, string> interpolate)
+        static void parseParameterTypes(JObject joParameterTypes, List<string> errors, IDictionary<string, ParameterType> parameterTypes, Func<string, string> interpolate)
         {
             foreach (var jpParam in joParameterTypes.Properties())
             {
@@ -633,11 +659,18 @@ namespace REST0.APIService
                 int? scale;
                 var typeBase = parseSqlType(type, out length, out scale).ToLowerInvariant();
 
+                var sqlType = getSqlType(typeBase);
+                if (!sqlType.HasValue)
+                {
+                    errors.Add("Unrecognized SQL type name '{0}'".F(typeBase));
+                    continue;
+                }
+
                 parameterTypes[jpParam.Name] = new ParameterType()
                 {
                     Name = jpParam.Name,
                     TypeBase = typeBase,
-                    SqlDbType = getSqlType(typeBase),
+                    SqlDbType = sqlType.Value,
                     Length = length,
                     Scale = scale,
                 };
@@ -1048,42 +1081,43 @@ namespace REST0.APIService
             return new JsonResult(statusCode, message, errorData);
         }
 
-        static System.Data.SqlDbType getSqlType(string typeBase)
+        static SqlDbType? getSqlType(string typeBase)
         {
             switch (typeBase)
             {
-                case "int": return System.Data.SqlDbType.Int;
-                case "bit": return System.Data.SqlDbType.Bit;
-                case "varchar": return System.Data.SqlDbType.VarChar;
-                case "nvarchar": return System.Data.SqlDbType.NVarChar;
-                case "char": return System.Data.SqlDbType.Char;
-                case "nchar": return System.Data.SqlDbType.NChar;
-                case "datetime": return System.Data.SqlDbType.DateTime;
-                case "datetime2": return System.Data.SqlDbType.DateTime2;
-                case "datetimeoffset": return System.Data.SqlDbType.DateTimeOffset;
-                case "decimal": return System.Data.SqlDbType.Decimal;
-                case "money": return System.Data.SqlDbType.Money;
-                default: return System.Data.SqlDbType.VarChar;
+                case "int": return SqlDbType.Int;
+                case "bit": return SqlDbType.Bit;
+                case "varchar": return SqlDbType.VarChar;
+                case "nvarchar": return SqlDbType.NVarChar;
+                case "char": return SqlDbType.Char;
+                case "nchar": return SqlDbType.NChar;
+                case "datetime": return SqlDbType.DateTime;
+                case "datetime2": return SqlDbType.DateTime2;
+                case "datetimeoffset": return SqlDbType.DateTimeOffset;
+                case "decimal": return SqlDbType.Decimal;
+                case "money": return SqlDbType.Money;
+                default: return (SqlDbType?)null;
             }
         }
 
-        static object getSqlValue(string type, string value)
+        static object getSqlValue(SqlDbType sqlDbType, string value)
         {
             if (value == null) return DBNull.Value;
             if (value == "\0") return DBNull.Value;
-            switch (type)
+
+            switch (sqlDbType)
             {
-                case "int": return new System.Data.SqlTypes.SqlInt32(Int32.Parse(value));
-                case "bit": return new System.Data.SqlTypes.SqlBoolean(Boolean.Parse(value));
-                case "varchar": return new System.Data.SqlTypes.SqlString(value);
-                case "nvarchar": return new System.Data.SqlTypes.SqlString(value);
-                case "char": return new System.Data.SqlTypes.SqlString(value);
-                case "nchar": return new System.Data.SqlTypes.SqlString(value);
-                case "datetime": return new System.Data.SqlTypes.SqlDateTime(DateTime.Parse(value));
-                case "datetime2": return DateTime.Parse(value);
-                case "datetimeoffset": return DateTimeOffset.Parse(value);
-                case "decimal": return new System.Data.SqlTypes.SqlDecimal(Decimal.Parse(value));
-                case "money": return new System.Data.SqlTypes.SqlMoney(Decimal.Parse(value));
+                case SqlDbType.Int: return new System.Data.SqlTypes.SqlInt32(Int32.Parse(value));
+                case SqlDbType.Bit: return new System.Data.SqlTypes.SqlBoolean(Boolean.Parse(value));
+                case SqlDbType.VarChar: return new System.Data.SqlTypes.SqlString(value);
+                case SqlDbType.NVarChar: return new System.Data.SqlTypes.SqlString(value);
+                case SqlDbType.Char: return new System.Data.SqlTypes.SqlString(value);
+                case SqlDbType.NChar: return new System.Data.SqlTypes.SqlString(value);
+                case SqlDbType.DateTime: return new System.Data.SqlTypes.SqlDateTime(DateTime.Parse(value));
+                case SqlDbType.DateTime2: return DateTime.Parse(value);
+                case SqlDbType.DateTimeOffset: return DateTimeOffset.Parse(value);
+                case SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal(Decimal.Parse(value));
+                case SqlDbType.Money: return new System.Data.SqlTypes.SqlMoney(Decimal.Parse(value));
                 default: return new System.Data.SqlTypes.SqlString(value);
             }
         }
@@ -1164,6 +1198,7 @@ namespace REST0.APIService
                         bool isValid = true;
                         string message = null;
                         object sqlValue;
+                        var paramType = (param.Value.SqlType ?? param.Value.Type);
                         string rawValue = req.QueryString[param.Key];
 
                         if (param.Value.IsOptional & (rawValue == null))
@@ -1175,7 +1210,7 @@ namespace REST0.APIService
                         {
                             try
                             {
-                                sqlValue = getSqlValue(param.Value.Type.TypeBase, rawValue);
+                                sqlValue = getSqlValue(paramType.SqlDbType, rawValue);
                             }
                             catch (Exception ex)
                             {
@@ -1185,18 +1220,17 @@ namespace REST0.APIService
                             }
                         }
 
-                        if (!isValid) return new JsonResult(400, "Invalid parameter value", new
-                        {
-                            parameter = param.Key
-                        });
-
-                        // Get the SQL type:
-                        var sqlType = getSqlType(param.Value.Type.TypeBase);
+                        if (!isValid)
+                            return new JsonResult(400, "Invalid parameter value", new
+                            {
+                                parameter = param.Key,
+                                message
+                            });
 
                         // Add the SQL parameter:
-                        var sqlprm = cmd.Parameters.Add(param.Value.Name, sqlType);
-                        if (param.Value.Type.Length != null) sqlprm.Precision = (byte)param.Value.Type.Length.Value;
-                        if (param.Value.Type.Scale != null) sqlprm.Scale = (byte)param.Value.Type.Scale.Value;
+                        var sqlprm = cmd.Parameters.Add(param.Value.Name, paramType.SqlDbType);
+                        if (paramType.Length != null) sqlprm.Precision = (byte)paramType.Length.Value;
+                        if (paramType.Scale != null) sqlprm.Scale = (byte)paramType.Scale.Value;
                         sqlprm.SqlValue = sqlValue;
                     }
                 }
