@@ -44,9 +44,9 @@ Let's break down this example URL:
 
 As it turns out, the path part of a request URL is always made of 3 parts:
 
- # request type (`meta` or `data`)
- # service name
- # method name
+ 1. request type (`meta` or `data`)
+ 2. service name
+ 3. method name
 
 If a client wants to stick to a known, specific version of the service, all it has to do is specify that
 exact service name in the request URL, e.g.
@@ -137,30 +137,33 @@ descriptor:
 
   * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
   * `connection`: override the service-level DB connection
-  * `query`: defines the parts of the SQL SELECT query to be executed. The SQL query is broken out into
-     individual clauses of the SELECT query. This separation is beneficial for many reasons. Firstly, it
-     guarantees that one cannot write a query that is not a SELECT query. Secondly, it provides a way to
-     rearrange the clauses of a SQL query in a way that is more readable and more amenable to a logical
-     thought process during query development. I prefer the from, where, select order because I logically
-     think in that order when constructing a query. SQL, it seems, wants you to constructs your queries
-     backwards! The final query is constructed as follows:
-        [WITH XMLNAMESPACES (
-            '`xmlns:???`' AS ???
-        )]
-        [WITH `withCTEidentifier` AS (`withCTEexpression`)]
-        SELECT `select`
-        [FROM `from`]
-        [WHERE `where`]
-        [GROUP BY `groupBy`]
-        [HAVING `having`]
-        [ORDER BY `orderBy`]
-     Hopefully this break-down is clear where each property of the `query` object goes in the constructed
-     SELECT query. The only property absolutely required is `select`, of course.
-     NOTE: If this form is too restrictive, advanced developers may opt for the `sql` property which
-     overrides this deconstructed form and allows one to specify raw SQL query code. Use of this property
-     should be discouraged though. The deconstructed form guarantees safety in that one cannot write a
-     non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can otherwise
-     not be specified in the deconstructed form.
+  * `query`: defines the parts of the SQL SELECT query to be executed.
+
+The SQL query is broken out into individual clauses of the SELECT query. This separation is beneficial
+for many reasons. Firstly, it guarantees that one cannot write a query that is not a SELECT query.
+Secondly, it provides a way to rearrange the clauses of a SQL query in a way that is more readable and
+more amenable to a logical thought process during query development.
+
+The final query is constructed as follows:
+
+    [WITH XMLNAMESPACES (
+        '`xmlns:???`' AS `???`
+    )]
+    [WITH `withCTEidentifier` AS (`withCTEexpression`)]
+    SELECT `select`
+    [FROM `from`]
+    [WHERE `where`]
+    [GROUP BY `groupBy`]
+    [HAVING `having`]
+    [ORDER BY `orderBy`]
+
+Hopefully this break-down is clear where each property of the `query` object goes in the constructed
+SELECT query. The only property absolutely required is `select`, of course.
+NOTE: If this form is too restrictive, advanced developers may opt for the `sql` property which
+overrides this deconstructed form and allows one to specify raw SQL query code. Use of this property
+should be discouraged though. The deconstructed form guarantees safety in that one cannot write a
+non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can otherwise
+not be specified in the deconstructed form.
 
 Versioning
 ----------
@@ -179,13 +182,13 @@ String Interpolation
 A useful feature is the ability to define a dictionary of string values that may be interpolated into other
 string values found in the descriptor objects.
 
-The "$" key represents this dictionary of named string values which can be used for interpolation. These key
-names can include any character except '}'.
+The `"$"` key represents this dictionary of named string values which can be used for interpolation. These key
+names can include any character except `'}'`.
 
-Almost any string value (with few exceptions) may contain a "${key}" interpolation syntax which looks up "key"
-in the "$" dictionary and interpolates its value into the final string value.
+Almost any string value (with few exceptions) may contain a `"${key}"` interpolation syntax which looks up `key`
+in the `"$"` dictionary and interpolates its value into the final string value.
 
-The "$" dictionary also participates in service inheritance. A derived service inherits its base service's "$"
+The `"$"` dictionary also participates in service inheritance. A derived service inherits its base service's `"$"`
 dictionary for interpolation values.
 
-The "$" dictionary may be defined at the root level or at the service level.
+The `"$"` dictionary may be defined at the root level or at the service level.
