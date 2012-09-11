@@ -1,0 +1,3 @@
+[submodule "REST0"]
+	path = REST0
+	url = git@github.com:JamesDunne/rest0.git

@@ -2,8 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using REST0.Definition;
-using REST0.Implementation;
 
 namespace REST0.APIService
 {
@@ -24,7 +22,6 @@ namespace REST0.APIService
 
             // Create an HTTP host and start it:
             var handler = new Services.APIHttpAsyncHandler();
-            //var handler = new LoanHandler();
 
             var host = new HttpAsyncHost(handler);
             host.SetConfiguration(configValues);
