@@ -51,8 +51,8 @@ As it turns out, the path part of a request URL is always made of 3 parts:
  2. service name
  3. method name
 
-How it works
-------------
+Services
+--------
 
 When the service host application first starts up, it fetches a service descriptor file (either via HTTP or via a local file)
 and parses it to fully constructs all services and methods. Once the descriptor is parsed, the service is ready to process
@@ -65,14 +65,15 @@ nice features on top of JSON such as comments (both `//` and `/* */` kind) and m
 (recursively, of course) using the `@import("path")` directive. This import functionality allows for a more maintainable
 service descriptor which can be split across many files.
 
-Let's take a look at the simplest example of how a service developer would define a single service and a single method:
+Let's take a look at the simplest example of how a service developer would define a single service and a single method
+in an HSON document:
 
 ```javascript
 {
   "services": {             // services dictionary
     "sis;core;v1": {        // service name
       "connection": {       // connection string
-        "dataSource":       "(local)\\SQLEXPRESS",
+        "dataSource":       "(local)\\SQLEXPRESS",   // or use @"(local)\SQLEXPRESS" to avoid backslash escaping
         "initialCatalog":   "APITest"
       },
       "methods": {          // service methods dictionary
@@ -88,7 +89,7 @@ Let's take a look at the simplest example of how a service developer would defin
 }
 ```
 
-First, we see the `services` section. This section is a dictionary of unique service names with a service descriptor assigned
+First, we see the `services` section. This section is a dictionary of unique service names with a **service descriptor** assigned
 to each name. A service descriptor defines, among other things, all the methods that belong to that service.
 
 At the next level, we see `sis;core;v1` as a property key. This is a unique name for a service and its value is that
@@ -108,6 +109,11 @@ instance) and the database name, respectively. You can see here that we're refer
 database named "APITest". This sample database is included with the project and you can attach it to your
 local SQLEXPRESS instance.
 
+Methods
+-------
+
+Continuing from the example above...
+
 ```javascript
 "methods": {          // service methods dictionary
   "GetStudent": {     // method name
@@ -120,7 +126,7 @@ local SQLEXPRESS instance.
 ```
 
 Next, we come to the `methods` section. This is the main section of interest here. It is a dictionary of unique method
-names with a method descriptor assigned to each name.
+names with a **method descriptor** assigned to each name.
 
 The method descriptor describes, among other things, the SQL query used to implement the method. This is the `query`
 property.
@@ -161,19 +167,18 @@ we have `"xmlns:sis": "http://example.org/sis/v1"`, the resulting `WITH XMLNAMES
     )
 ```
 
-NOTE: Developers may opt to use the `sql` property as opposed to the deconstructed form shown here. The `sql` property allows
+NOTE: Developers may opt to use the `sql` property instead of the `query` property shown here. The `sql` property allows
 one to specify raw SQL query code. Use of this property should be discouraged though. The deconstructed form guarantees safety
 in that one cannot write a non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can
 otherwise not be specified in the deconstructed form.
 
-Methods
--------
-
 There are several elements of a method descriptor:
 
   * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
+  * `parameterTypes`: defines method-specific parameter types.
   * `connection`: override the service-level DB connection.
   * `query`: defines the parts of the SQL SELECT query to be executed.
+  * `sql`: overrides `query` to provide raw SQL text to be executed.
 
 Parameters
 ----------
@@ -198,7 +203,8 @@ Let's take a look at an example `parameters` section:
 Each key in the `parameters` section is the parameter name to be used in the request query-string. The parameter descriptor
 describes what that parameter's name is in the SQL query and what its type is.
 
-Notice that we're missing a definition for the `StudentID` parameter type here.
+Notice that we're missing a definition for the `StudentID` parameter type here. Let's take care of that by introducing a
+new section, `parameterTypes`.
 
 Parameter types are described by `parameterTypes` sections. These sections may appear at the global level, the service level,
 or the method level.
@@ -224,6 +230,28 @@ provide self-documentation of services and their parameters for new service cons
 named type, as opposed to just `int`, this helps to document the fact that a `StudentID` primary key is expected as opposed
 to just any old integer value.
 
+More examples:
+
+```javascript
+  "parameterTypes": {
+    "StudentID":      { "type": "int" },
+    "FirstName":      { "type": "nvarchar(50)" },
+    "DateTimeOffset": { "type": "datetimeoffset(7)" },
+    // Can provide length and scale:
+    "Grade":          { "type": "decimal(8,4)" }
+  },
+  "parameters": {
+    // Add `"optional": true` to make a parameter optional; its default value will be NULL in that case.
+    "test":   { "sqlName": "@test",   "type": "Grade",            "optional": true },
+    "dummy":  { "sqlName": "@dummy",  "sqlType": "nvarchar(10)",  "optional": true }
+  },
+```
+
+The `type` property names an existing type from a `parameterTypes` section. The `sqlType` property just describes an
+anonymous SQL type used only for the current parameter. For some cases, it's best to not bother defining a named
+parameter type just for a single parameter. These should be used sparingly, e.g. for one-off cases, not to be established
+as a best practice.
+
 Service Aliases
 ---------------
 
@@ -245,16 +273,33 @@ for existing service names. This is useful for providing a layer of indirection 
 is to create an unversioned alias name that always points to the bleeding-edge version name. This way, clients that want
 to stay on top can, while those that want to stick with a more constant service can specify the exact version they want.
 
+Service Inheritance
+-------------------
+
+Services support a very simple inheritance model. This is achieved through the use of the `base` property in the service
+descriptor. It is used to name the service being derived from.
+
+A derived service by default inherits all methods and parameter types from its base service. Methods and parameter types
+may be replaced or added in the derived service. Removing methods is done by assigning the method name to `null` inside
+the `methods` section.
+
+Examples:
+
+```javascript
+  "sis;core;v3": {
+    // Derives from "sis;core;v2" service:
+    "base": "sis;core;v2",
+    // Methods are added to/overwritten over the base service:
+    "methods": {
+      // We deprecate the "Questionable" method here with a warning message; it may still be used, but
+      // a warning will be issued.
+      "Questionable": { "deprecated": "This method does not correctly query data." }
+    }
+  },
+```
+
 Versioning
 ----------
-
-Services are versioned through a very simple inheritance model. This is achieved with a property of the
-service descriptor not mentioned previously. The `base` property is used to name the service being derived
-from.
-
-A derived service by default inherits all methods and parameter types from its base service. Methods and
-parameter types may be replaced or added in the derived service. Removing methods is done by assigning the
-method name to `null` inside the `methods` section.
 
 If a client wants to stick to a known, specific version of the service, all it has to do is specify that
 exact service name in the request URL, e.g.
@@ -289,3 +334,29 @@ The `"$"` dictionary also participates in service inheritance. A derived service
 dictionary for interpolation values.
 
 The `"$"` dictionary may be defined at the root level or at the service level.
+
+Examples:
+
+```javascript
+  "sis;core;v1": {
+    // This is the base dictionary. Its values may be overridden in derived services.
+    "$": {
+        "Student":      "vw001_Student",
+        "Student;st":   "st.StudentID, st.FirstName, st.LastName"
+    },
+    "methods": {
+      "GetStudent": {
+        "parameters": {
+            "id":       { "sqlName": "@id",     "type": "StudentID" }
+        },
+        "query": {
+            "from":     "${Student} st",
+            "where":    "st.StudentID = @id",
+            "select":   "${Student;st}"
+        }
+      }
+    }
+  }
+```
+
+Here we can see the usage of the `"$"` dictionary and the string interpolation syntax found in the `query` properties.
