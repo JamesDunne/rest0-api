@@ -60,14 +60,8 @@ scenario
 
         request
         {
-            url         = "/data/sis;quad/GetStudentByName?lastName=Dunne&firstName=James";
+            url         = "/data/sis;core/GetStudentByName?lastName=Dunne&firstName=James";
             statuscode  = 200;
         }
-
-        //request
-        //{
-        //    url         = "/data/sis;quad;v1/Questionable?id=3";
-        //    statuscode  = 500;
-        //}
     }
 }
