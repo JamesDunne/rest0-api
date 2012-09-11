@@ -19,10 +19,26 @@ namespace REST0.APIService.Descriptors
     {
         [JsonIgnore]
         readonly Service desc;
+        [JsonIgnore]
+        readonly bool inclName;
+        [JsonIgnore]
+        readonly bool inclMethods;
 
-        internal ServiceSerialized(Service desc)
+        internal ServiceSerialized(Service desc, bool inclName = false, bool inclMethods = true)
         {
             this.desc = desc;
+            this.inclName = inclName;
+            this.inclMethods = inclMethods;
+        }
+
+        [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
+        public string Name
+        {
+            get
+            {
+                if (!inclName) return null;
+                return desc.Name;
+            }
         }
 
         [JsonProperty("base", NullValueHandling = NullValueHandling.Ignore)]
@@ -33,8 +49,7 @@ namespace REST0.APIService.Descriptors
         {
             get
             {
-                if (desc.Tokens == null || desc.Tokens.Count == 0)
-                    return null;
+                if (desc.Tokens == null || desc.Tokens.Count == 0) return null;
                 return desc.Tokens;
             }
         }
@@ -47,8 +62,7 @@ namespace REST0.APIService.Descriptors
         {
             get
             {
-                if (desc.ParameterTypes == null || desc.ParameterTypes.Count == 0)
-                    return null;
+                if (desc.ParameterTypes == null || desc.ParameterTypes.Count == 0) return null;
 
                 // TODO(jsd): Make the parser do copy-on-write instead of copy-on-inherit so that this will work.
                 //if (desc.BaseService == null) return desc.ParameterTypes;
@@ -63,8 +77,8 @@ namespace REST0.APIService.Descriptors
         {
             get
             {
-                if (desc.Methods == null || desc.Methods.Count == 0)
-                    return null;
+                if (!inclMethods) return null;
+                if (desc.Methods == null || desc.Methods.Count == 0) return null;
                 return desc.Methods.ToDictionary(m => m.Key, m => new MethodSerialized(m.Value), StringComparer.OrdinalIgnoreCase);
             }
         }

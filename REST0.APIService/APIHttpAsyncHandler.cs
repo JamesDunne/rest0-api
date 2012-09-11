@@ -1259,7 +1259,10 @@ namespace REST0.APIService
                         success = true,
                         statusCode = 200,
                         hash = services.HashHexString,
-                        services = services.Value.ToDictionary(s => s.Key, s => s.Key != s.Value.Name ? (object)s.Value.Name : (object)new ServiceSerialized(s.Value))
+                        services = services.Value.ToDictionary(
+                            s => s.Key,
+                            s => s.Key != s.Value.Name ? (object)s.Value.Name : (object)new ServiceSerialized(s.Value, inclMethods: false)
+                        )
                     });
                 }
 
@@ -1298,6 +1301,7 @@ namespace REST0.APIService
                     success = true,
                     statusCode = 200,
                     hash = services.HashHexString,
+                    service = new ServiceSerialized(method.Service, inclName: true, inclMethods: false),
                     method = new MethodSerialized(method)
                 });
             }
