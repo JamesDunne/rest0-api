@@ -29,7 +29,8 @@ Before we get too far into the declarative nature, let's take a look at a very s
             }
         }
     ]
-}```
+}
+```
 
 Let's break down this example URL:
 
