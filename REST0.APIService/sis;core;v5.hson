@@ -12,12 +12,10 @@
             }
         },
         "TestRawSQL": {
-            "query": {
-                // Raw SQL code is fine, so long as it is a SELECT query:
-                "sql":  @"
+            // Raw SQL code is fine, so long as it is a SELECT query:
+            "sql":  @"
 SELECT  ${Student;st}
 FROM    ${Student} st WITH (NOLOCK)"
-            }
         }
     }
 }

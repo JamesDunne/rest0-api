@@ -165,10 +165,19 @@ namespace REST0.APIService
                 jpTokens = joService.Property("$");
                 if (jpTokens != null)
                 {
-                    // Extract the key/value pairs onto our token dictionary:
-                    foreach (var prop in ((JObject)jpTokens.Value).Properties())
-                        // NOTE(jsd): No interpolation over tokens themselves.
-                        tokens[prop.Name] = getString(prop);
+                    // Assigning a `null`?
+                    if (jpTokens.Value.Type == JTokenType.Null)
+                    {
+                        // Clear out all inherited tokens:
+                        tokens.Clear();
+                    }
+                    else
+                    {
+                        // Extract the key/value pairs onto our token dictionary:
+                        foreach (var prop in ((JObject)jpTokens.Value).Properties())
+                            // NOTE(jsd): No interpolation over tokens themselves.
+                            tokens[prop.Name] = getString(prop);
+                    }
                 }
 
                 // A lookup-or-null function used with `Interpolate`:
@@ -193,7 +202,16 @@ namespace REST0.APIService
                 jpParameterTypes = joService.Property("parameterTypes");
                 if (jpParameterTypes != null)
                 {
-                    parseParameterTypes(parameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                    // Assigning a `null`?
+                    if (jpParameterTypes.Value.Type == JTokenType.Null)
+                    {
+                        // Clear out all inherited parameter types:
+                        parameterTypes.Clear();
+                    }
+                    else
+                    {
+                        parseParameterTypes(parameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                    }
                 }
 
                 // Parse the methods:
@@ -249,7 +267,16 @@ namespace REST0.APIService
                         jpParameterTypes = joMethod.Property("parameterTypes");
                         if (jpParameterTypes != null)
                         {
-                            parseParameterTypes(method.ParameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                    // Assigning a `null`?
+                            if (jpParameterTypes.Value.Type == JTokenType.Null)
+                            {
+                                // Clear out all inherited parameter types:
+                                method.ParameterTypes.Clear();
+                            }
+                            else
+                            {
+                                parseParameterTypes(method.ParameterTypes, (JObject)jpParameterTypes.Value, (s) => s.Interpolate(tokenLookup));
+                            }
                         }
 
                         // Parse the parameters:
@@ -288,42 +315,45 @@ namespace REST0.APIService
                             }
                         }
 
-                        // Parse query:
-                        var jpQuery = joMethod.Property("query");
-                        if (jpQuery != null)
+                        // Check what type of query descriptor this is:
+                        var sql = getString(joMethod.Property("sql")).Interpolate(tokenLookup);
+                        if (sql != null)
                         {
-                            var joQuery = (JObject)jpQuery.Value;
-                            method.Query = new Query();
+                            // Raw SQL query; it must be a SELECT query but we can't validate that without some nasty parsing.
 
-                            // Check what type of query descriptor this is:
-                            var sql = getString(joQuery.Property("sql")).Interpolate(tokenLookup);
-                            if (sql != null)
+                            // Remove comments from the code and trim leading and trailing whitespace:
+                            sql = stripSQLComments(sql).Trim();
+
+                            // Crude attempts to verify a SELECT form:
+                            // A better approach would be to parse the root-level keywords (ignoring subqueries)
+                            // and skipping WITH.
+                            if (sql.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) ||
+                                sql.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) ||
+                                sql.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase) ||
+                                sql.StartsWith("MERGE", StringComparison.OrdinalIgnoreCase) ||
+                                sql.StartsWith("DROP", StringComparison.OrdinalIgnoreCase) ||
+                                sql.StartsWith("CREATE", StringComparison.OrdinalIgnoreCase) ||
+                                sql.StartsWith("ALTER", StringComparison.OrdinalIgnoreCase))
                             {
-                                // Raw SQL query; it must be a SELECT query but we can't validate that without some nasty parsing.
-
-                                // Remove comments from the code and trim leading and trailing whitespace:
-                                sql = stripSQLComments(sql).Trim();
-
-                                // Crude attempts to verify a SELECT form:
-                                // A better approach would be to parse the root-level keywords (ignoring subqueries)
-                                // and skipping WITH.
-                                if (sql.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("MERGE", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("DROP", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("CREATE", StringComparison.OrdinalIgnoreCase) ||
-                                    sql.StartsWith("ALTER", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    method.Errors.Add("Query must be a SELECT query.");
-                                }
-                                else
-                                {
-                                    method.Query.SQL = sql;
-                                }
+                                method.Errors.Add("Query must be a SELECT query.");
                             }
                             else
                             {
+                                method.Query = new Query
+                                {
+                                    SQL = sql
+                                };
+                            }
+                        }
+                        else
+                        {
+                            // Parse query:
+                            var jpQuery = joMethod.Property("query");
+                            if (jpQuery != null)
+                            {
+                                var joQuery = (JObject)jpQuery.Value;
+                                method.Query = new Query();
+
                                 // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
 
                                 // 'select' is required:
@@ -1122,42 +1152,66 @@ namespace REST0.APIService
                 //    cmd.CommandText += "SET ROWCOUNT {0};".F(rowLimit) + Environment.NewLine;
                 cmd.CommandText += method.Query.SQL;
 
+                Stopwatch swOpenTime, swExecTime, swReadTime;
+
+                swOpenTime = Stopwatch.StartNew();
                 try
                 {
                     // Open the connection asynchronously:
                     await conn.OpenAsync();
+                    swOpenTime.Stop();
                 }
                 catch (Exception ex)
                 {
+                    swOpenTime.Stop();
                     return getErrorResponse(ex);
                 }
 
                 // Execute the query:
                 SqlDataReader dr;
+                swExecTime = Stopwatch.StartNew();
                 try
                 {
                     // Execute the query asynchronously:
                     dr = await cmd.ExecuteReaderAsync(System.Data.CommandBehavior.SequentialAccess | System.Data.CommandBehavior.CloseConnection);
+                    swExecTime.Stop();
                 }
                 catch (ArgumentException aex)
                 {
+                    swExecTime.Stop();
                     // SQL Parameter validation only gives `null` for `aex.ParamName`.
                     return new JsonResult(400, aex.Message);
                 }
                 catch (Exception ex)
                 {
+                    swExecTime.Stop();
                     return getErrorResponse(ex);
                 }
 
+                swReadTime = Stopwatch.StartNew();
                 try
                 {
                     var result = await ReadResult(dr);
-                    var meta = new { };
+                    swReadTime.Stop();
+                    var meta = new
+                    {
+                        service = method.Service.Name,
+                        method = method.Name,
+                        openTime = swOpenTime.ElapsedMilliseconds,
+                        execTime = swExecTime.ElapsedMilliseconds,
+                        readTime = swReadTime.ElapsedMilliseconds
+                    };
                     return new JsonResult(result, meta);
                 }
                 catch (JsonResultException jex)
                 {
+                    swReadTime.Stop();
                     return new JsonResult(jex.StatusCode, jex.Message);
+                }
+                catch (Exception ex)
+                {
+                    swReadTime.Stop();
+                    return getErrorResponse(ex);
                 }
             }
         }

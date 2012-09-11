@@ -149,7 +149,11 @@
         // into more manageable divisions. `@import` directives may be placed at any point in the
         // HSON document, so long as the final result produces a well-formed JSON result.
         @import("sis;core;v5.hson"),
+
+        // Some error detection/reporting test cases:
         "error-tests": {
+            "$": null,
+            "parameterTypes": null,
             "methods": {
                 "Test1": {
                     "parameters": {
@@ -160,6 +164,60 @@
                     "parameters": {
                         "id": { "sqlName": "@id", "sqlType": "int" }
                     }
+                },
+                "Test3": {
+                    "query": {}
+                },
+                "Test4": {
+                    "query": {
+                        "select": "* from test"
+                    }
+                },
+                "Test5": {
+                    "query": {
+                        "select":   "*",
+                        "from":     "test where 1 = 1"
+                    }
+                },
+                "Test6": {
+                    "query": {
+                        "select":   "*",
+                        "from":     "test",
+                        "where":    "1 = 1 group by 1"
+                    }
+                },
+                "Test7": {
+                    "query": {
+                        "select":   "*",
+                        "from":     "test",
+                        "where":    "1 = 1",
+                        "groupBy":  "1 having count(1) > 1"
+                    }
+                },
+                "Test8": {
+                    "query": {
+                        "select":   "*",
+                        "from":     "test",
+                        "where":    "1 = 1",
+                        "groupBy":  "1",
+                        "having":   "count(1) > 1 order by 1"
+                    }
+                },
+                "Test9": {
+                    "query": {
+                        "select":   "*",
+                        "from":     "test",
+                        "where":    "1 = 1",
+                        "groupBy":  "1",
+                        "having":   "count(1) > 1",
+                        "orderBy":  "1 for xml auto"
+                    }
+                },
+                "Test10": {
+                    "sql": @"
+INSERT INTO table
+SELECT * FROM othertable
+"
                 }
             }
         }
