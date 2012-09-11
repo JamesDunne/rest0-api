@@ -33,8 +33,17 @@ namespace REST0.APIService.Descriptors
 
         [JsonProperty("sqlName")]
         public string SqlName { get { return desc.SqlName; } }
-        [JsonProperty("sqlType")]
-        public string SqlType { get { return desc.Type != null ? desc.Type.FullType : desc.SqlType.FullType; } }
+        [JsonProperty("sqlType", NullValueHandling = NullValueHandling.Include)]
+        public string SqlType
+        {
+            get
+            {
+                var type = desc.Type ?? desc.SqlType;
+                if (type == null) return null;
+
+                return type.FullType;
+            }
+        }
 
         [JsonProperty("type", NullValueHandling = NullValueHandling.Ignore)]
         public string Type { get { return desc.Type != null ? desc.Type.Name : null; } }
