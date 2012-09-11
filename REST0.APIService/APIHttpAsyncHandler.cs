@@ -214,6 +214,17 @@ namespace REST0.APIService
                     }
                 }
 
+                // Create the service descriptor:
+                Service svc = new Service()
+                {
+                    Name = jpService.Name,
+                    BaseService = baseService,
+                    ConnectionString = connectionString,
+                    ParameterTypes = parameterTypes,
+                    Methods = methods,
+                    Tokens = tokens
+                };
+
                 // Parse the methods:
                 var jpMethods = joService.Property("methods");
                 if (jpMethods != null)
@@ -248,6 +259,7 @@ namespace REST0.APIService
                             };
                         }
                         methods[jpMethod.Name] = method;
+                        method.Service = svc;
 
                         Debug.Assert(method.Errors != null);
 
@@ -293,24 +305,36 @@ namespace REST0.APIService
                                 var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
                                 var isOptional = getBool(joParam.Property("optional")) ?? false;
 
-                                ParameterType paramType = null;
-                                if (sqlType == null)
+                                var param = new Parameter()
                                 {
+                                    Name = jpParam.Name,
+                                    SqlName = sqlName,
+                                    IsOptional = isOptional
+                                };
+
+                                if (sqlType != null)
+                                {
+                                    int? length;
+                                    int? scale;
+                                    var typeBase = parseSqlType(sqlType, out length, out scale);
+                                    param.SqlType = new ParameterType()
+                                    {
+                                        TypeBase = typeBase,
+                                        Length = length,
+                                        Scale = scale
+                                    };
+                                }
+                                else
+                                {
+                                    ParameterType paramType;
                                     if (!parameterTypes.TryGetValue(typeName, out paramType))
                                     {
                                         method.Errors.Add("Could not find parameter type '{0}' for parameter '{1}'".F(typeName, jpParam.Name));
                                         continue;
                                     }
+                                    param.Type = paramType;
                                 }
 
-                                var param = new Parameter()
-                                {
-                                    Name = jpParam.Name,
-                                    SqlName = sqlName,
-                                    SqlType = sqlType,
-                                    Type = paramType,
-                                    IsOptional = isOptional
-                                };
                                 method.Parameters.Add(jpParam.Name, param);
                             }
                         }
@@ -458,23 +482,8 @@ namespace REST0.APIService
                         {
                             method.Errors.Add("No query specified");
                         }
-                    }
+                    } // foreach (var method)
                 }
-
-                // Create the service descriptor:
-                var svc = new Service()
-                {
-                    Name = jpService.Name,
-                    BaseService = baseService,
-                    ConnectionString = connectionString,
-                    ParameterTypes = parameterTypes,
-                    Methods = methods,
-                    Tokens = tokens
-                };
-
-                // Assign each of our methods' Service property:
-                foreach (var m in methods.Values)
-                    m.Service = svc;
 
                 // Add the parsed service descriptor:
                 tmpServices.Add(jpService.Name, svc);
@@ -545,6 +554,33 @@ namespace REST0.APIService
             }
         }
 
+        static string parseSqlType(string type, out int? length, out int? scale)
+        {
+            length = null;
+            scale = null;
+
+            int idx = type.LastIndexOf('(');
+            if (idx != -1)
+            {
+                Debug.Assert(type[type.Length - 1] == ')');
+
+                int comma = type.LastIndexOf(',');
+                if (comma == -1)
+                {
+                    length = Int32.Parse(type.Substring(idx + 1, type.Length - idx - 2));
+                }
+                else
+                {
+                    length = Int32.Parse(type.Substring(idx + 1, comma - idx - 1));
+                    scale = Int32.Parse(type.Substring(comma + 1, type.Length - comma - 2));
+                }
+
+                type = type.Substring(0, idx);
+            }
+
+            return type;
+        }
+
         static void parseParameterTypes(IDictionary<string, ParameterType> parameterTypes, JObject joParameterTypes, Func<string, string> interpolate)
         {
             foreach (var jpParam in joParameterTypes.Properties())
@@ -559,32 +595,14 @@ namespace REST0.APIService
                 var jpType = ((JObject)jpParam.Value).Property("type");
 
                 var type = interpolate(getString(jpType));
-                int? length = null;
-                int? scale = null;
-
-                int idx = type.LastIndexOf('(');
-                if (idx != -1)
-                {
-                    Debug.Assert(type[type.Length - 1] == ')');
-
-                    int comma = type.LastIndexOf(',');
-                    if (comma == -1)
-                    {
-                        length = Int32.Parse(type.Substring(idx + 1, type.Length - idx - 2));
-                    }
-                    else
-                    {
-                        length = Int32.Parse(type.Substring(idx + 1, comma - idx - 1));
-                        scale = Int32.Parse(type.Substring(comma + 1, type.Length - comma - 2));
-                    }
-
-                    type = type.Substring(0, idx);
-                }
+                int? length;
+                int? scale;
+                var typeBase = parseSqlType(type, out length, out scale);
 
                 parameterTypes[jpParam.Name] = new ParameterType()
                 {
                     Name = jpParam.Name,
-                    Type = type,
+                    TypeBase = typeBase,
                     Length = length,
                     Scale = scale,
                 };
@@ -1121,7 +1139,7 @@ namespace REST0.APIService
                         {
                             try
                             {
-                                sqlValue = getSqlValue(param.Value.Type.Type, rawValue);
+                                sqlValue = getSqlValue(param.Value.Type.TypeBase, rawValue);
                             }
                             catch (Exception ex)
                             {
@@ -1134,7 +1152,7 @@ namespace REST0.APIService
                         if (!isValid) return new JsonResult(400, "Invalid parameter value");
 
                         // Get the SQL type:
-                        var sqlType = getSqlType(param.Value.Type.Type);
+                        var sqlType = getSqlType(param.Value.Type.TypeBase);
 
                         // Add the SQL parameter:
                         var sqlprm = cmd.Parameters.Add(param.Value.Name, sqlType);
@@ -1259,10 +1277,7 @@ namespace REST0.APIService
                         success = true,
                         statusCode = 200,
                         hash = services.HashHexString,
-                        services = services.Value.ToDictionary(
-                            s => s.Key,
-                            s => s.Key != s.Value.Name ? (object)s.Value.Name : (object)new ServiceSerialized(s.Value, inclMethods: false)
-                        )
+                        services = services.Value.Keys
                     });
                 }
 
@@ -1281,7 +1296,7 @@ namespace REST0.APIService
                         success = true,
                         statusCode = 200,
                         hash = services.HashHexString,
-                        service = new ServiceSerialized(desc)
+                        service = new ServiceSerialized(desc, onlyMethodNames: true)
                     });
                 }
                 if (path.Length > 3)
@@ -1301,7 +1316,7 @@ namespace REST0.APIService
                     success = true,
                     statusCode = 200,
                     hash = services.HashHexString,
-                    service = new ServiceSerialized(method.Service, inclName: true, inclMethods: false),
+                    service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
                     method = new MethodSerialized(method)
                 });
             }

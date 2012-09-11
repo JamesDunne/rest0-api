@@ -63,6 +63,7 @@
     <Reference Include="System.XML" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Descriptors\RestfulLink.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="APIHttpAsyncHandler.cs" />
     <Compile Include="HsonReader.cs" />

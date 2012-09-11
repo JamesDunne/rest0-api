@@ -12,7 +12,7 @@ namespace REST0.APIService.Descriptors
         public bool IsOptional { get; set; }
         public string SqlName { get; set; }
         // Mutually exclusive:
-        public string SqlType { get; set; }
+        public ParameterType SqlType { get; set; }
         public ParameterType Type { get; set; }
     }
 
@@ -31,10 +31,10 @@ namespace REST0.APIService.Descriptors
 
         [JsonProperty("sqlName")]
         public string SqlName { get { return desc.SqlName; } }
+        [JsonProperty("sqlType")]
+        public string SqlType { get { return desc.Type != null ? desc.Type.FullType : desc.SqlType.FullType; } }
 
         [JsonProperty("type", NullValueHandling = NullValueHandling.Ignore)]
         public string Type { get { return desc.Type != null ? desc.Type.Name : null; } }
-        [JsonProperty("sqlType")]
-        public string SqlType { get { return desc.Type != null ? desc.Type.Type : desc.SqlType; } }
     }
 }

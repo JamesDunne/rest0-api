@@ -23,12 +23,15 @@ namespace REST0.APIService.Descriptors
         readonly bool inclName;
         [JsonIgnore]
         readonly bool inclMethods;
+        [JsonIgnore]
+        readonly bool onlyMethodNames;
 
-        internal ServiceSerialized(Service desc, bool inclName = false, bool inclMethods = true)
+        internal ServiceSerialized(Service desc, bool inclName = false, bool inclMethods = true, bool onlyMethodNames = false)
         {
             this.desc = desc;
             this.inclName = inclName;
             this.inclMethods = inclMethods;
+            this.onlyMethodNames = onlyMethodNames;
         }
 
         [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
@@ -42,7 +45,13 @@ namespace REST0.APIService.Descriptors
         }
 
         [JsonProperty("base", NullValueHandling = NullValueHandling.Ignore)]
-        public string BaseService { get { return desc.BaseService == null ? null : desc.BaseService.Name; } }
+        public string BaseService
+        {
+            get
+            {
+                return desc.BaseService == null ? null : desc.BaseService.Name;
+            }
+        }
 
         [JsonProperty("$", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, string> Tokens
@@ -73,13 +82,30 @@ namespace REST0.APIService.Descriptors
         }
 
         [JsonProperty("methods", NullValueHandling = NullValueHandling.Ignore)]
-        public IDictionary<string, MethodSerialized> Methods
+        public IDictionary<string, RestfulLink> Methods
         {
             get
             {
                 if (!inclMethods) return null;
+
+                if (onlyMethodNames)
+                {
+                    return desc.Methods.ToDictionary(
+                        m => m.Key,
+                        m => RestfulLink.Create("child", "/meta/{0}/{1}".F(desc.Name, m.Value.Name))
+                    );
+                }
+
                 if (desc.Methods == null || desc.Methods.Count == 0) return null;
-                return desc.Methods.ToDictionary(m => m.Key, m => new MethodSerialized(m.Value), StringComparer.OrdinalIgnoreCase);
+                return desc.Methods.ToDictionary(
+                    m => m.Key,
+                    m => (RestfulLink) RestfulLink.Create(
+                        "child",
+                        "/meta/{0}/{1}".F(desc.Name, m.Value.Name),
+                        new MethodSerialized(m.Value)
+                    ),
+                    StringComparer.OrdinalIgnoreCase
+                );
             }
         }
     }
