@@ -21,7 +21,7 @@ namespace REST0.APIService
     public sealed class APIHttpAsyncHandler : IHttpAsyncHandler, IInitializationTrait, IConfigurationTrait
     {
         ConfigurationDictionary localConfig;
-        SHA1Hashed<IDictionary<string, Service>> services;
+        SHA1Hashed<ServiceCollection> services;
 
         #region Handler configure and initialization
 
@@ -95,14 +95,27 @@ namespace REST0.APIService
             var config = await FetchConfigData();
             if (config == null) return false;
 
-            // Parse the config document:
-            var doc = config.Value;
+            // Parse the config object:
+            var tmp = ParseConfigData(config.Value);
+            Debug.Assert(tmp != null);
 
-            var tmpServices = new Dictionary<string, Service>(StringComparer.OrdinalIgnoreCase);
+            // Store the new service collection paired with the JSON hash:
+            services = new SHA1Hashed<ServiceCollection>(tmp, config.Hash);
+            return true;
+        }
+
+        ServiceCollection ParseConfigData(JObject joConfig)
+        {
+            // Create the ServiceCollection that will be returned:
+            var coll = new ServiceCollection()
+            {
+                Errors = new List<string>(5),
+                Services = new Dictionary<string, Service>(StringComparer.OrdinalIgnoreCase)
+            };
 
             // Parse the root token dictionary first:
             var rootTokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var jpTokens = doc.Property("$");
+            var jpTokens = joConfig.Property("$");
             if (jpTokens != null)
             {
                 // Extract the key/value pairs onto a copy of the token dictionary:
@@ -112,22 +125,25 @@ namespace REST0.APIService
 
             // Parse root parameter types:
             var rootParameterTypes = new Dictionary<string, ParameterType>(StringComparer.OrdinalIgnoreCase);
-            var jpParameterTypes = doc.Property("parameterTypes");
+            var jpParameterTypes = joConfig.Property("parameterTypes");
             if (jpParameterTypes != null)
             {
                 var errors = new List<string>(5);
                 parseParameterTypes((JObject)jpParameterTypes.Value, errors, rootParameterTypes, (s) => s);
                 if (errors.Count > 0)
                 {
-                    // TODO: what now??
-                    throw new Exception();
+                    // Add errors encountered and keep going:
+                    coll.Errors.AddRange(errors);
                 }
             }
 
             // 'services' section is not optional:
             JToken jtServices;
-            if (!doc.TryGetValue("services", out jtServices))
-                return false;
+            if (!joConfig.TryGetValue("services", out jtServices))
+            {
+                coll.Errors.Add("No 'services' section defined");
+                return coll;
+            }
             var joServices = (JObject)jtServices;
 
             // Parse each service descriptor:
@@ -140,7 +156,6 @@ namespace REST0.APIService
                 var svcErrors = new List<string>(5);
 
                 Service baseService = null;
-
                 IDictionary<string, string> tokens;
                 string connectionString;
                 IDictionary<string, ParameterType> parameterTypes;
@@ -150,16 +165,19 @@ namespace REST0.APIService
                 var jpBase = joService.Property("base");
                 if (jpBase != null)
                 {
-                    // NOTE(jsd): Forward references are not allowed. Base service
-                    // must be defined before the current service in document order.
-                    baseService = tmpServices[getString(jpBase)];
+                    // NOTE(jsd): Forward references are not allowed. Base service must be defined before the current service in document order.
+                    string baseName = getString(jpBase);
+                    if (!coll.Services.TryGetValue(baseName, out baseService))
+                    {
+                        coll.Errors.Add("Unknown base service name '{0}' for service '{1}'".F(baseName, jpService.Name));
+                        continue;
+                    }
 
                     // Create copies of what's inherited from the base service to mutate:
+                    connectionString = baseService.ConnectionString;
                     tokens = new Dictionary<string, string>(baseService.Tokens);
                     parameterTypes = new Dictionary<string, ParameterType>(baseService.ParameterTypes, StringComparer.OrdinalIgnoreCase);
                     methods = new Dictionary<string, Method>(baseService.Methods, StringComparer.OrdinalIgnoreCase);
-
-                    connectionString = baseService.ConnectionString;
                 }
                 else
                 {
@@ -231,7 +249,8 @@ namespace REST0.APIService
                     ConnectionString = connectionString,
                     ParameterTypes = parameterTypes,
                     Methods = methods,
-                    Tokens = tokens
+                    Tokens = tokens,
+                    Errors = svcErrors
                 };
 
                 // Parse the methods:
@@ -327,6 +346,7 @@ namespace REST0.APIService
                                 if (sqlNames.Contains(sqlName))
                                 {
                                     method.Errors.Add("Duplicate SQL parameter name (`sqlName`): '{0}'".F(sqlName));
+                                    continue;
                                 }
 
                                 var param = new Parameter()
@@ -345,6 +365,7 @@ namespace REST0.APIService
                                     if (!sqlDbType.HasValue)
                                     {
                                         method.Errors.Add("Unknown SQL type name '{0}' for parameter '{1}'".F(typeBase, jpParam.Name));
+                                        continue;
                                     }
                                     else
                                     {
@@ -437,15 +458,15 @@ namespace REST0.APIService
                                 method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
 
                                 // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
-                                // TODO: Are xmlns namespace prefixes case-insensitive?
-                                method.Query.XMLNamespaces = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                                var xmlNamespaces = new Dictionary<string, string>(StringComparer.Ordinal);
                                 foreach (var jpXmlns in joQuery.Properties())
                                 {
                                     if (!jpXmlns.Name.StartsWith("xmlns:")) continue;
                                     var prefix = jpXmlns.Name.Substring(6);
                                     var ns = getString(jpXmlns).Interpolate(tokenLookup);
-                                    method.Query.XMLNamespaces.Add(prefix, ns);
+                                    xmlNamespaces.Add(prefix, ns);
                                 }
+                                if (xmlNamespaces.Count > 0) method.Query.XMLNamespaces = xmlNamespaces;
 
                                 // Strip out all SQL comments:
                                 string withCTEidentifier = stripSQLComments(method.Query.WithCTEidentifier);
@@ -486,16 +507,16 @@ namespace REST0.APIService
                                 {
                                     // Construct the query:
                                     bool didSemi = false;
-                                    if (method.Query.XMLNamespaces.Count > 0)
+                                    if (xmlNamespaces.Count > 0)
                                     {
                                         didSemi = true;
                                         qb.AppendLine(";WITH XMLNAMESPACES (");
-                                        using (var en = method.Query.XMLNamespaces.GetEnumerator())
+                                        using (var en = xmlNamespaces.GetEnumerator())
                                             for (int i = 0; en.MoveNext(); ++i)
                                             {
                                                 var xmlns = en.Current;
                                                 qb.AppendFormat("  '{0}' AS {1}", xmlns.Value.Replace("\'", "\'\'"), xmlns.Key);
-                                                if (i < method.Query.XMLNamespaces.Count - 1) qb.Append(",\r\n");
+                                                if (i < xmlNamespaces.Count - 1) qb.Append(",\r\n");
                                                 else qb.Append("\r\n");
                                             }
                                         qb.Append(")\r\n");
@@ -526,55 +547,56 @@ namespace REST0.APIService
                 }
 
                 // Add the parsed service descriptor:
-                tmpServices.Add(jpService.Name, svc);
+                coll.Services.Add(jpService.Name, svc);
             }
 
             // 'aliases' section is optional:
-            var jpAliases = doc.Property("aliases");
+            var jpAliases = joConfig.Property("aliases");
             if (jpAliases != null)
             {
                 // Parse the named aliases:
                 var joAliases = (JObject)jpAliases.Value;
-                foreach (var alias in joAliases.Properties())
+                foreach (var jpAlias in joAliases.Properties())
                 {
                     // Add the existing Service reference to the new name:
-                    tmpServices.Add(alias.Name, tmpServices[getString(alias)]);
+                    string svcName = getString(jpAlias);
+                    Service svcref;
+                    if (!coll.Services.TryGetValue(svcName, out svcref))
+                    {
+                        coll.Errors.Add("Unknown service name '{0}' for alias '{1}'".F(svcName, jpAlias.Name));
+                        continue;
+                    }
+                    coll.Services.Add(jpAlias.Name, svcref);
                 }
             }
 
-            // The update must boil down to an atomic reference update:
-            services = new SHA1Hashed<IDictionary<string, Service>>(tmpServices, config.Hash);
-
-            return true;
+            return coll;
         }
 
         static object jsonToSqlValue(JToken jToken, ParameterType targetType)
         {
             switch (jToken.Type)
             {
-                case JTokenType.String:
-                    return new System.Data.SqlTypes.SqlString((string)jToken);
-                case JTokenType.Boolean:
-                    return new System.Data.SqlTypes.SqlBoolean((bool)jToken);
+                case JTokenType.String: return new SqlString((string)jToken);
+                case JTokenType.Boolean: return new SqlBoolean((bool)jToken);
                 case JTokenType.Integer:
                     switch (targetType.SqlDbType)
                     {
-                        case SqlDbType.Int: return new System.Data.SqlTypes.SqlInt32((int)jToken);
-                        case SqlDbType.BigInt: return new System.Data.SqlTypes.SqlInt64((long)jToken);
-                        case SqlDbType.SmallInt: return new System.Data.SqlTypes.SqlInt16((short)jToken);
-                        case SqlDbType.TinyInt: return new System.Data.SqlTypes.SqlByte((byte)(int)jToken);
-                        case SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
-                        default: return new System.Data.SqlTypes.SqlInt32((int)jToken);
+                        case SqlDbType.Int: return new SqlInt32((int)jToken);
+                        case SqlDbType.BigInt: return new SqlInt64((long)jToken);
+                        case SqlDbType.SmallInt: return new SqlInt16((short)jToken);
+                        case SqlDbType.TinyInt: return new SqlByte((byte)(int)jToken);
+                        case SqlDbType.Decimal: return new SqlDecimal((decimal)jToken);
+                        default: return new SqlInt32((int)jToken);
                     }
                 case JTokenType.Float:
                     switch (targetType.SqlDbType)
                     {
-                        case SqlDbType.Float: return new System.Data.SqlTypes.SqlDouble((double)jToken);
-                        case SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal((decimal)jToken);
-                        default: return new System.Data.SqlTypes.SqlDouble((double)jToken);
+                        case SqlDbType.Float: return new SqlDouble((double)jToken);
+                        case SqlDbType.Decimal: return new SqlDecimal((decimal)jToken);
+                        default: return new SqlDouble((double)jToken);
                     }
-                case JTokenType.Null:
-                    return DBNull.Value;
+                case JTokenType.Null: return DBNull.Value;
                 // Not really much else here to support.
                 default:
                     throw new Exception("Unsupported JSON token type {0}".F(jToken.Type));
@@ -691,18 +713,24 @@ namespace REST0.APIService
 
         #region Loading configuration
 
-        SHA1Hashed<JObject> ReadJSONStream(Stream input)
+        SHA1Hashed<JObject> ReadHSONStream(Stream input)
         {
             using (var hsr = new HsonReader(input, UTF8.WithoutBOM, true, 8192))
+                return ReadJSONStream(hsr);
+        }
+
+        SHA1Hashed<JObject> ReadJSONStream(TextReader input)
+        {
 #if TRACE
             // Send the JSON to Console.Out while it's being read:
-            using (var tee = new TeeTextReader(hsr, (line) => Console.Write(line)))
+            using (var tee = new TeeTextReader(input, (line) => Console.Write(line)))
             using (var sha1 = new SHA1TextReader(tee, UTF8.WithoutBOM))
 #else
-            using (var sha1 = new SHA1TextReader(hsr, UTF8.WithoutBOM))
+            using (var sha1 = new SHA1TextReader(input, UTF8.WithoutBOM))
 #endif
             using (var jr = new JsonTextReader(sha1))
             {
+                // NOTE(jsd): Relying on parameter evaluation order for `sha1.GetHash()` to be correct.
                 var result = new SHA1Hashed<JObject>(Json.Serializer.Deserialize<JObject>(jr), sha1.GetHash());
 #if TRACE
                 Console.WriteLine();
@@ -726,10 +754,12 @@ namespace REST0.APIService
                 // Fire off a request now to our configuration server for our config data:
                 try
                 {
+                    // Read only raw JSON from the HTTP response, not HSON:
                     var req = HttpWebRequest.CreateHttp(url);
                     using (var rsp = await req.GetResponseAsync())
                     using (var rspstr = rsp.GetResponseStream())
-                        return ReadJSONStream(rspstr);
+                    using (var tr = new StreamReader(rspstr))
+                        return ReadJSONStream(tr);
                 }
                 catch (Exception ex)
                 {
@@ -746,11 +776,11 @@ namespace REST0.APIService
                 noConfig = false;
                 //Trace.WriteLine("Getting config data via file");
 
-                // Load the local JSON file:
+                // Load the local HSON file:
                 try
                 {
                     using (var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                        return ReadJSONStream(fs);
+                        return ReadHSONStream(fs);
                 }
                 catch (Exception ex)
                 {
@@ -1392,12 +1422,12 @@ namespace REST0.APIService
                 return new JsonResult(405, "Method Not Allowed");
 
             // Capture the current service configuration values only once per connection in case they update during:
-            var services = this.services;
+            var serviceCollection = this.services;
+            var services = serviceCollection.Value.Services;
 
             // Split the path into component parts:
-            string absPath = req.Url.AbsolutePath;
             string[] path;
-
+            string absPath = req.Url.AbsolutePath;
             if (absPath == "/") path = new string[0];
             else path = absPath.Substring(1).Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
 
@@ -1407,15 +1437,21 @@ namespace REST0.APIService
                 return new JsonResult(new { });
             }
 
+            // What kind of a request is it?
             if (path[0] == "meta")
             {
+                // `/meta` request
                 if (path.Length == 1)
                 {
                     // Report all service descriptors:
                     return new JsonResult(new
                     {
-                        hash = services.HashHexString,
-                        services = services.Value.Keys
+                        hash = serviceCollection.HashHexString,
+                        errors = serviceCollection.Value.Errors,
+                        services = services.ToDictionary(
+                            s => s.Key,
+                            s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name))
+                        )
                     });
                 }
 
@@ -1423,7 +1459,7 @@ namespace REST0.APIService
                 string serviceName = path[1];
 
                 Service desc;
-                if (!services.Value.TryGetValue(serviceName, out desc))
+                if (!services.TryGetValue(serviceName, out desc))
                     return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
                     {
                         service = serviceName
@@ -1434,7 +1470,7 @@ namespace REST0.APIService
                     // Report this service descriptor:
                     return new JsonResult(new
                     {
-                        hash = services.HashHexString,
+                        hash = serviceCollection.HashHexString,
                         service = new ServiceSerialized(desc, inclName: true, onlyMethodNames: true)
                     });
                 }
@@ -1455,7 +1491,7 @@ namespace REST0.APIService
                 // Report this method descriptor:
                 return new JsonResult(new
                 {
-                    hash = services.HashHexString,
+                    hash = serviceCollection.HashHexString,
                     service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
                     method = new MethodSerialized(method, inclMethodName: true)
                 });
@@ -1471,7 +1507,7 @@ namespace REST0.APIService
                 string serviceName = path[1];
 
                 Service desc;
-                if (!services.Value.TryGetValue(serviceName, out desc))
+                if (!services.TryGetValue(serviceName, out desc))
                     return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
                     {
                         service = serviceName
@@ -1500,15 +1536,24 @@ namespace REST0.APIService
                 // Check required parameters:
                 if (method.Parameters != null)
                 {
-                    foreach (var param in method.Parameters)
-                    {
-                        if (param.Value.IsOptional) continue;
-                        if (!req.QueryString.AllKeys.Contains(param.Key))
-                            return new JsonResult(400, "Missing required parameter '{0}'".F(param.Key), new
-                            {
-                                parameter = param.Key
-                            });
-                    }
+                    // Create a hash set of the query-string parameter names:
+                    var q = new HashSet<string>(req.QueryString.AllKeys, StringComparer.OrdinalIgnoreCase);
+
+                    // Create a list of missing required parameter names:
+                    var missingParams = new List<string>(method.Parameters.Count(p => !p.Value.IsOptional));
+                    missingParams.AddRange(
+                        from p in method.Parameters
+                        where !p.Value.IsOptional && !q.Contains(p.Key)
+                        select p.Key
+                    );
+
+                    if (missingParams.Count > 0)
+                        return new JsonResult(400, "Missing required parameters", new
+                        {
+                            parameters = missingParams
+                        });
+
+                    missingParams = null;
                 }
 
                 // Execute the query:

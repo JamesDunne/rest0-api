@@ -83,6 +83,9 @@ namespace REST0.APIService.Descriptors
             }
         }
 
+        [JsonProperty("query", NullValueHandling = NullValueHandling.Ignore)]
+        public Query Query { get { return desc.Query; } }
+
         [JsonProperty("errors", NullValueHandling = NullValueHandling.Ignore)]
         public List<string> Errors
         {

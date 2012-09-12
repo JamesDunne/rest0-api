@@ -5,6 +5,12 @@ using Newtonsoft.Json;
 
 namespace REST0.APIService.Descriptors
 {
+    class ServiceCollection
+    {
+        public IDictionary<string, Service> Services { get; set; }
+        public List<string> Errors { get; set; }
+    }
+
     class Service
     {
         public string Name { get; set; }
@@ -13,6 +19,7 @@ namespace REST0.APIService.Descriptors
         public string ConnectionString { get; set; }
         public IDictionary<string, ParameterType> ParameterTypes { get; set; }
         public IDictionary<string, Method> Methods { get; set; }
+        public List<string> Errors { get; set; }
     }
 
     class ServiceSerialized
@@ -52,6 +59,9 @@ namespace REST0.APIService.Descriptors
                 return desc.BaseService == null ? null : desc.BaseService.Name;
             }
         }
+
+        [JsonProperty("errors", NullValueHandling = NullValueHandling.Ignore)]
+        public IList<string> Errors { get { return desc.Errors; } }
 
         [JsonProperty("$", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, string> Tokens
@@ -99,7 +109,7 @@ namespace REST0.APIService.Descriptors
                 if (desc.Methods == null || desc.Methods.Count == 0) return null;
                 return desc.Methods.ToDictionary(
                     m => m.Key,
-                    m => (RestfulLink) RestfulLink.Create(
+                    m => (RestfulLink)RestfulLink.Create(
                         "child",
                         "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name),
                         new MethodSerialized(m.Value)
