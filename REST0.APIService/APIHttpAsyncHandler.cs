@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading.Tasks;
 using REST0.APIService.Descriptors;
 using System.Data;
+using System.Data.SqlTypes;
 
 #pragma warning disable 1998
 
@@ -1145,18 +1146,40 @@ namespace REST0.APIService
 
             switch (sqlDbType)
             {
-                case SqlDbType.Int: return new System.Data.SqlTypes.SqlInt32(Int32.Parse(value));
-                case SqlDbType.Bit: return new System.Data.SqlTypes.SqlBoolean(Boolean.Parse(value));
-                case SqlDbType.VarChar: return new System.Data.SqlTypes.SqlString(value);
-                case SqlDbType.NVarChar: return new System.Data.SqlTypes.SqlString(value);
-                case SqlDbType.Char: return new System.Data.SqlTypes.SqlString(value);
-                case SqlDbType.NChar: return new System.Data.SqlTypes.SqlString(value);
-                case SqlDbType.DateTime: return new System.Data.SqlTypes.SqlDateTime(DateTime.Parse(value));
-                case SqlDbType.DateTime2: return DateTime.Parse(value);
+                case SqlDbType.BigInt: return new SqlInt64(Int64.Parse(value));
+                case SqlDbType.Binary: return new SqlBinary(Convert.FromBase64String(value));
+                case SqlDbType.Bit: return new SqlBoolean(Boolean.Parse(value));
+                case SqlDbType.Char: return new SqlString(value);
+                case SqlDbType.Date: return new SqlDateTime(DateTime.Parse(value));
+                case SqlDbType.DateTime:
+                case SqlDbType.DateTime2: return SqlDateTime.Parse(value);
                 case SqlDbType.DateTimeOffset: return DateTimeOffset.Parse(value);
-                case SqlDbType.Decimal: return new System.Data.SqlTypes.SqlDecimal(Decimal.Parse(value));
-                case SqlDbType.Money: return new System.Data.SqlTypes.SqlMoney(Decimal.Parse(value));
-                default: return new System.Data.SqlTypes.SqlString(value);
+                case SqlDbType.Decimal: return new SqlDecimal(Decimal.Parse(value));
+                case SqlDbType.Float: return new SqlDouble(Double.Parse(value));
+                case SqlDbType.Image: return new SqlBinary(Convert.FromBase64String(value));
+                case SqlDbType.Int: return new SqlInt32(Int32.Parse(value));
+                case SqlDbType.Money: return new SqlMoney(Decimal.Parse(value));
+                case SqlDbType.NChar: return new SqlString(value);
+                case SqlDbType.NVarChar: return new SqlString(value);
+                case SqlDbType.NText: return new SqlString(value);
+                case SqlDbType.Real: return new SqlDouble(Double.Parse(value));
+                case SqlDbType.SmallDateTime: return new SqlDateTime(DateTime.Parse(value));
+                case SqlDbType.SmallInt: return new SqlInt16(Int16.Parse(value));
+                case SqlDbType.SmallMoney: return new SqlDecimal(Decimal.Parse(value));
+                //case SqlDbType.Variant: return new (Double.Parse(value));
+                case SqlDbType.Text: return new SqlString(value);
+                case SqlDbType.Time: return DateTime.Parse(value);
+                case SqlDbType.Timestamp: return Convert.FromBase64String(value);
+                case SqlDbType.TinyInt: return new SqlByte(Byte.Parse(value));
+                case SqlDbType.UniqueIdentifier: return new Guid(value);
+                case SqlDbType.VarBinary: return new SqlBinary(Convert.FromBase64String(value));
+                case SqlDbType.VarChar: return new SqlString(value);
+                case SqlDbType.Xml:
+                    // NOTE(jsd): SqlXml's ctor copies the stream contents into memory.
+                    using (var sr = new StringReader(value))
+                    using (var xr = new System.Xml.XmlTextReader(sr))
+                        return new SqlXml(xr);
+                default: return null;
             }
         }
 
@@ -1249,6 +1272,11 @@ namespace REST0.APIService
                             try
                             {
                                 sqlValue = getSqlValue(paramType.SqlDbType, rawValue);
+                                if (sqlValue == null)
+                                {
+                                    isValid = false;
+                                    message = "Unsupported SQL type '{0}'".F(paramType.SqlDbType);
+                                }
                             }
                             catch (Exception ex)
                             {
