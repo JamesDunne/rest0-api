@@ -1450,7 +1450,8 @@ namespace REST0.APIService
                         errors = serviceCollection.Value.Errors,
                         services = services.ToDictionary(
                             s => s.Key,
-                            s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name))
+                            s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
+                            StringComparer.OrdinalIgnoreCase
                         )
                     });
                 }
@@ -1559,6 +1560,87 @@ namespace REST0.APIService
                 // Execute the query:
                 var result = await ExecuteQuery(req, method);
                 return result;
+            }
+            else if (path[0] == "errors")
+            {
+                // Report errors encountered while building all service descriptors.
+                if (path.Length == 1)
+                {
+                    return new JsonResult(new
+                    {
+                        hash = serviceCollection.HashHexString,
+                        errors = serviceCollection.Value.Errors,
+                        services =
+                            serviceCollection.Value.Services.Where(s => s.Value.Errors.Any() || s.Value.Methods.Any(m => m.Value.Errors.Any())).ToDictionary(
+                                s => s.Key,
+                                s => new
+                                {
+                                    errors = s.Value.Errors,
+                                    methods = s.Value.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
+                                        m => m.Key,
+                                        m => new
+                                        {
+                                            errors = m.Value.Errors
+                                        },
+                                        StringComparer.OrdinalIgnoreCase
+                                    )
+                                },
+                                StringComparer.OrdinalIgnoreCase
+                            )
+                    });
+                }
+
+                // Look up the service name:
+                string serviceName = path[1];
+
+                Service desc;
+                if (!services.TryGetValue(serviceName, out desc))
+                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                    {
+                        service = serviceName
+                    });
+
+                if (path.Length == 2)
+                {
+                    // Report errors encountered while building a specific service descriptor.
+                    return new JsonResult(new
+                    {
+                        hash = serviceCollection.HashHexString,
+                        service = desc.Name,
+                        errors = desc.Errors,
+                        methods = desc.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
+                            m => m.Key,
+                            m => new
+                            {
+                                errors = m.Value.Errors
+                            },
+                            StringComparer.OrdinalIgnoreCase
+                        )
+                    });
+                }
+
+                if (path.Length > 3)
+                {
+                    return new JsonResult(400, "Too many path components supplied");
+                }
+
+                // Find method:
+                string methodName = path[2];
+                Method method;
+                if (!desc.Methods.TryGetValue(methodName, out method))
+                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
+                    {
+                        method = methodName
+                    });
+
+                // Report errors encountered while building a specific method:
+                return new JsonResult(new
+                {
+                    hash = serviceCollection.HashHexString,
+                    service = desc.Name,
+                    method = method.Name,
+                    errors = method.Errors
+                });
             }
             else
             {
