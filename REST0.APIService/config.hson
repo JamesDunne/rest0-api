@@ -267,6 +267,7 @@ SELECT * FROM othertable
                         "select":   "*"
                     }
                 },
+/*
                 "Test2": {
                     "query": {
                         "select":   "1 as '{Person', 2 as first, 3 as last, null as '{Address', null as Line1, 1 as '}}{Test', 4 as stuff, null as '}'"
@@ -275,6 +276,47 @@ SELECT * FROM othertable
                 "Test3": {
                     "query": {
                         "select":   "null as '{Person', 2 as first, 3 as last, null as '{Address', null as Line1, 1 as '}}{Test', 4 as stuff, null as '}'"
+                    }
+                }
+*/
+                "Test2": {
+                    "query": {
+                        "select":   "1 AS id, 'james' AS first, 'dunne' AS last, 2 AS id, '123 fake st' AS line1, 1 AS test, NULL AS stuff"
+                    },
+                    "result": {
+                        "Person": {
+                            "<exists>": "id",
+                            "FirstName": "first",
+                            "LastName": "last",
+                            "Address": {
+                                "<exists>": "id`2",
+                                "Line1": "line1"
+                            }
+                        },
+                        "Test": {
+                            "<exists>": "test",
+                            "stuff": "stuff"
+                        }
+                    }
+                },
+                "Test3": {
+                    "query": {
+                        "select":   "1 AS id, 'james' AS first, 'dunne' AS last, NULL AS id, '123 fake st' AS line1, 1 AS test, 0.45 AS stuff"
+                    },
+                    "result": {
+                        "Person": {
+                            "<exists>": "id",
+                            "FirstName": "first",
+                            "LastName": "last",
+                            "Address": {
+                                "<exists>": "id`2",
+                                "Line1": "line1"
+                            }
+                        },
+                        "Test": {
+                            "<exists>": "test",
+                            "stuff": "stuff"
+                        }
                     }
                 }
             }

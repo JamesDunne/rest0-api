@@ -15,6 +15,7 @@ namespace REST0.APIService.Descriptors
         public IDictionary<string, Parameter> Parameters { get; set; }
         public string ConnectionString { get; set; }
         public Query Query { get; set; }
+        public Dictionary<string, ColumnMapping> Mapping { get; set; }
         public List<string> Errors { get; set; }
 
         internal Method Clone()

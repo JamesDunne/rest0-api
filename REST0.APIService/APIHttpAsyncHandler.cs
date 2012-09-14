@@ -1,8 +1,12 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using REST0.APIService.Descriptors;
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Data;
 using System.Data.SqlClient;
+using System.Data.SqlTypes;
 using System.Diagnostics;
 using System.Hson;
 using System.IO;
@@ -10,9 +14,6 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
-using REST0.APIService.Descriptors;
-using System.Data;
-using System.Data.SqlTypes;
 
 #pragma warning disable 1998
 
@@ -543,6 +544,14 @@ namespace REST0.APIService
                         {
                             method.Errors.Add("No query specified");
                         }
+
+                        // Parse result mapping:
+                        var jpMapping = joMethod.Property("result");
+                        if (jpMapping != null)
+                        {
+                            var joMapping = (JObject)jpMapping.Value;
+                            method.Mapping = parseMapping(joMapping, method.Errors);
+                        }
                     } // foreach (var method)
                 }
 
@@ -571,6 +580,36 @@ namespace REST0.APIService
             }
 
             return coll;
+        }
+
+        private Dictionary<string, ColumnMapping> parseMapping(JObject joMapping, List<string> errors)
+        {
+            var mapping = new Dictionary<string, ColumnMapping>();
+            foreach (var prop in joMapping.Properties())
+            {
+                if (prop.Value.Type == JTokenType.Object)
+                {
+                    mapping.Add(prop.Name, new ColumnMapping(parseMapping((JObject)prop.Value, errors)));
+                }
+                else if (prop.Value.Type == JTokenType.String)
+                {
+                    string value = getString(prop);
+                    // Parse "columnName`instanceNumber" for resolving duplicate column names.
+                    int idx = value.LastIndexOf('`');
+                    if (idx != -1)
+                    {
+                        string colName = value.Substring(0, idx);
+                        string colInst = value.Substring(idx + 1);
+                        mapping.Add(prop.Name, new ColumnMapping(colName, Int32.Parse(colInst) - 1));
+                    }
+                    else
+                    {
+                        mapping.Add(prop.Name, new ColumnMapping(value));
+                    }
+                }
+                else errors.Add("Unhandled token type {0} for mapping property '{1}'".F(prop.Value.Type, prop.Name));
+            }
+            return mapping;
         }
 
         static object jsonToSqlValue(JToken jToken, ParameterType targetType)
@@ -605,7 +644,7 @@ namespace REST0.APIService
 
         static string parseConnection(JObject joConnection, List<string> errors, Func<string, string> interpolate)
         {
-            var csb = new System.Data.SqlClient.SqlConnectionStringBuilder();
+            var csb = new SqlConnectionStringBuilder();
 
             try
             {
@@ -1049,7 +1088,7 @@ namespace REST0.APIService
         {
             JsonResultException jex;
             JsonSerializationException jsex;
-            System.Data.SqlClient.SqlException sqex;
+            SqlException sqex;
 
             object innerException = null;
             if (ex.InnerException != null)
@@ -1071,7 +1110,7 @@ namespace REST0.APIService
 
                 return new JsonResult(500, jsex.Message, new[] { errorData });
             }
-            else if ((sqex = ex as System.Data.SqlClient.SqlException) != null)
+            else if ((sqex = ex as SqlException) != null)
             {
                 return sqlError(sqex);
             }
@@ -1089,13 +1128,13 @@ namespace REST0.APIService
             }
         }
 
-        static JsonResult sqlError(System.Data.SqlClient.SqlException sqex)
+        static JsonResult sqlError(SqlException sqex)
         {
             int statusCode = 500;
 
-            var errorData = new List<System.Data.SqlClient.SqlError>(sqex.Errors.Count);
+            var errorData = new List<SqlError>(sqex.Errors.Count);
             var msgBuilder = new StringBuilder(sqex.Message.Length);
-            foreach (System.Data.SqlClient.SqlError err in sqex.Errors)
+            foreach (SqlError err in sqex.Errors)
             {
                 // Skip "The statement has been terminated.":
                 if (err.Number == 3621) continue;
@@ -1213,77 +1252,174 @@ namespace REST0.APIService
             }
         }
 
-        async Task<List<Dictionary<string, object>>> ReadResult(SqlDataReader dr)
+        /// <summary>
+        /// Represents a row mapping implementation.
+        /// </summary>
+        /// <param name="names"></param>
+        /// <param name="ordinals"></param>
+        /// <param name="method"></param>
+        /// <param name="columns"></param>
+        /// <returns></returns>
+        delegate Dictionary<string, object> RowMapperDelegate(Method method, string[] names, ILookup<string, int> ordinals, object[] values);
+
+        /// <summary>
+        /// Parses column names for '{' and '}' which are used to indicate nested object mapping.
+        /// </summary>
+        /// <param name="names"></param>
+        /// <param name="ordinals"></param>
+        /// <param name="method"></param>
+        /// <param name="values"></param>
+        /// <returns></returns>
+        Dictionary<string, object> RowMapperCurlyInflate(Method method, string[] names, ILookup<string, int> ordinals, object[] values)
+        {
+            var objStack = new Stack<Dictionary<string, object>>(3);
+            var result = new Dictionary<string, object>();
+            var addTo = result;
+
+            // Enumerate columns asynchronously:
+            for (int i = 0; i < values.Length; ++i)
+            {
+                object col = values[i];
+                string name = names[i];
+
+                // Opening or closing a sub-object?
+                if (name.StartsWith("{") || name.StartsWith("}"))
+                {
+                    int n = 0;
+                    while (n < name.Length)
+                    {
+                        // Allow any number of leading close-curlies:
+                        if (name[n] == '}')
+                        {
+                            addTo = objStack.Pop();
+                            ++n;
+                            continue;
+                        }
+
+                        // Only one open-curly allowed at the end:
+                        if (name[n] == '{')
+                        {
+                            var curr = addTo;
+                            objStack.Push(addTo);
+                            if (curr == null) break;
+
+                            string objname = name.Substring(n + 1);
+
+                            if (col == DBNull.Value)
+                                addTo = null;
+                            else
+                                addTo = new Dictionary<string, object>();
+
+                            if (curr.ContainsKey(objname))
+                                throw new JsonResultException(500, "{0} key specified more than once".F(name));
+                            curr.Add(objname, addTo);
+                        }
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if (addTo == null) continue;
+                addTo.Add(name, col);
+            }
+
+            if (objStack.Count != 0)
+                throw new JsonResultException(500, "Too many open curlies in column list: {0}".F(objStack.Count));
+
+            return result;
+        }
+
+        Dictionary<string, object> mapColumns(Dictionary<string, ColumnMapping> mapping, ILookup<string, int> ordinals, object[] values)
+        {
+            int count = mapping.Count;
+
+            ColumnMapping exists;
+            if (mapping.TryGetValue("<exists>", out exists))
+            {
+                --count;
+                if (values[ordinals[exists.Name].ElementAt(exists.Instance)] == DBNull.Value)
+                    return null;
+            }
+
+            // Create a dictionary to hold this JSON sub-object:
+            var result = new Dictionary<string, object>(count, StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in mapping)
+            {
+                if (prop.Key == "<exists>") continue;
+                object value;
+                // Recursively map columns:
+                if (prop.Value.Columns != null)
+                    value = mapColumns(prop.Value.Columns, ordinals, values);
+                else
+                    value = values[ordinals[prop.Value.Name].ElementAt(prop.Value.Instance)];
+                result.Add(prop.Key, value);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Maps columns from the result set using the mapping schema defined in the method descriptor.
+        /// </summary>
+        /// <param name="names"></param>
+        /// <param name="ordinals"></param>
+        /// <param name="method"></param>
+        /// <param name="values"></param>
+        /// <returns></returns>
+        Dictionary<string, object> RowMapperUseMapping(Method method, string[] names, ILookup<string, int> ordinals, object[] values)
+        {
+            // No custom mapping?
+            if (method.Mapping == null)
+            {
+                var result = new Dictionary<string, object>();
+
+                // Use a default straight mapping:
+                for (int i = 0; i < names.Length; ++i)
+                    result.Add(names[i], values[i]);
+
+                return result;
+            }
+
+            // We have a custom mapping:
+            return mapColumns(method.Mapping, ordinals, values);
+        }
+
+        /// <summary>
+        /// Reads the entire SqlDataReader asynchronously and returns the entire list of row objects when complete.
+        /// </summary>
+        /// <param name="method"></param>
+        /// <param name="dr"></param>
+        /// <param name="rowMapper"></param>
+        /// <returns></returns>
+        async Task<List<Dictionary<string, object>>> ReadResult(Method method, SqlDataReader dr, RowMapperDelegate rowMapper)
         {
             int fieldCount = dr.FieldCount;
 
-            // TODO: check if this is superfluous.
-            var header = new string[fieldCount];
+            var names = new string[fieldCount];
+            var columns = new object[fieldCount];
             for (int i = 0; i < fieldCount; ++i)
             {
-                header[i] = dr.GetName(i);
+                names[i] = dr.GetName(i);
             }
+
+            var nameLookup = (
+                from i in Enumerable.Range(0, fieldCount)
+                select new { i, name = dr.GetName(i) }
+            ).ToLookup(p => p.name, p => p.i);
 
             var list = new List<Dictionary<string, object>>();
 
             // Enumerate rows asynchronously:
             while (await dr.ReadAsync())
             {
-                var objStack = new Stack<Dictionary<string, object>>(3);
-                var result = new Dictionary<string, object>();
-                var addTo = result;
-
                 // Enumerate columns asynchronously:
                 for (int i = 0; i < fieldCount; ++i)
                 {
-                    object col = await dr.GetFieldValueAsync<object>(i);
-                    string name = header[i];
-
-                    // Opening or closing a sub-object?
-                    if (name.StartsWith("{") || name.StartsWith("}"))
-                    {
-                        int n = 0;
-                        while (n < name.Length)
-                        {
-                            // Allow any number of leading close-curlies:
-                            if (name[n] == '}')
-                            {
-                                addTo = objStack.Pop();
-                                ++n;
-                                continue;
-                            }
-
-                            // Only one open-curly allowed at the end:
-                            if (name[n] == '{')
-                            {
-                                var curr = addTo;
-                                objStack.Push(addTo);
-                                if (curr == null) break;
-
-                                string objname = name.Substring(n + 1);
-
-                                if (col == DBNull.Value)
-                                    addTo = null;
-                                else
-                                    addTo = new Dictionary<string, object>();
-
-                                if (curr.ContainsKey(objname))
-                                    throw new JsonResultException(500, "{0} key specified more than once".F(name));
-                                curr.Add(objname, addTo);
-                            }
-                            break;
-                        }
-
-                        continue;
-                    }
-
-                    if (addTo == null) continue;
-                    addTo.Add(name, col);
+                    columns[i] = await dr.GetFieldValueAsync<object>(i);
                 }
 
-                if (objStack.Count != 0)
-                    throw new JsonResultException(500, "Too many open curlies in column list: {0}".F(objStack.Count));
-
+                // Map all the columns to a single object:
+                var result = rowMapper(method, names, nameLookup, columns);
                 list.Add(result);
             }
             return list;
@@ -1302,7 +1438,7 @@ namespace REST0.APIService
             }
 
             // Open a connection and execute the command:
-            using (var conn = new System.Data.SqlClient.SqlConnection(method.ConnectionString))
+            using (var conn = new SqlConnection(method.ConnectionString))
             using (var cmd = conn.CreateCommand())
             {
                 // Add parameters:
@@ -1356,7 +1492,7 @@ namespace REST0.APIService
                 }
 
                 //cmd.CommandTimeout = 360;   // seconds
-                cmd.CommandType = System.Data.CommandType.Text;
+                cmd.CommandType = CommandType.Text;
                 // Set TRANSACTION ISOLATION LEVEL and optionally ROWCOUNT before the query:
                 cmd.CommandText = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;" + Environment.NewLine;
                 //if (rowLimit > 0)
@@ -1385,7 +1521,7 @@ namespace REST0.APIService
                 try
                 {
                     // Execute the query asynchronously:
-                    dr = await cmd.ExecuteReaderAsync(System.Data.CommandBehavior.SequentialAccess | System.Data.CommandBehavior.CloseConnection);
+                    dr = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection);
                     swExecTime.Stop();
                 }
                 catch (ArgumentException aex)
@@ -1403,7 +1539,7 @@ namespace REST0.APIService
                 swReadTime = Stopwatch.StartNew();
                 try
                 {
-                    var result = await ReadResult(dr);
+                    var result = await ReadResult(method, dr, RowMapperUseMapping);
                     swReadTime.Stop();
                     var meta = new
                     {
