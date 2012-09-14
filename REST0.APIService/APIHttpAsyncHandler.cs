@@ -1229,8 +1229,9 @@ namespace REST0.APIService
             // Enumerate rows asynchronously:
             while (await dr.ReadAsync())
             {
+                var objStack = new Stack<Dictionary<string, object>>(3);
                 var result = new Dictionary<string, object>();
-                Dictionary<string, object> addTo = result;
+                var addTo = result;
 
                 // Enumerate columns asynchronously:
                 for (int i = 0; i < fieldCount; ++i)
@@ -1238,27 +1239,50 @@ namespace REST0.APIService
                     object col = await dr.GetFieldValueAsync<object>(i);
                     string name = header[i];
 
-                    if (name.StartsWith("__obj$"))
+                    // Opening or closing a sub-object?
+                    if (name.StartsWith("{") || name.StartsWith("}"))
                     {
-                        string objname = name.Substring(6);
-                        if (String.IsNullOrEmpty(objname))
-                            addTo = result;
-                        else
+                        int n = 0;
+                        while (n < name.Length)
                         {
-                            if (col == DBNull.Value)
-                                addTo = null;
-                            else
-                                addTo = new Dictionary<string, object>();
-                            if (result.ContainsKey(objname))
-                                throw new JsonResultException(400, "{0} key specified more than once".F(name));
-                            result.Add(objname, addTo);
+                            // Allow any number of leading close-curlies:
+                            if (name[n] == '}')
+                            {
+                                addTo = objStack.Pop();
+                                ++n;
+                                continue;
+                            }
+
+                            // Only one open-curly allowed at the end:
+                            if (name[n] == '{')
+                            {
+                                var curr = addTo;
+                                objStack.Push(addTo);
+                                if (curr == null) break;
+
+                                string objname = name.Substring(n + 1);
+
+                                if (col == DBNull.Value)
+                                    addTo = null;
+                                else
+                                    addTo = new Dictionary<string, object>();
+
+                                if (curr.ContainsKey(objname))
+                                    throw new JsonResultException(500, "{0} key specified more than once".F(name));
+                                curr.Add(objname, addTo);
+                            }
+                            break;
                         }
+
                         continue;
                     }
 
                     if (addTo == null) continue;
                     addTo.Add(name, col);
                 }
+
+                if (objStack.Count != 0)
+                    throw new JsonResultException(500, "Too many open curlies in column list: {0}".F(objStack.Count));
 
                 list.Add(result);
             }

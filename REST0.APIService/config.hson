@@ -68,12 +68,7 @@
                     "query": {
                         "from":     "${Student} st",
                         "where":    "st.StudentID = @id",
-                        // NOTE: The '__obj$' column prefix is a directive which controls the JSON response.
-                        // The name following the '$' is the key given to a new JSON sub-object. The column's
-                        // value is tested for nullability and if it is null then the key's value in the
-                        // response is null, otherwise it is a valid JSON object composed of all columns
-                        // following the '__obj$' until the next '__obj$' directive is given.
-                        "select":   "st.StudentID AS __obj$Student, ${Student;st}"
+                        "select":   "st.StudentID AS '{Student', ${Student;st}, NULL AS '}'"
                     }
                 },
                 "Test": {
@@ -140,7 +135,7 @@
                     "query": {
                         "from":         "${Student} st",
                         "where":        "(st.FirstName = @firstName) AND (st.LastName = @lastName)",
-                        "select":       "st.StudentID AS __obj$Student, ${Student;st}"
+                        "select":       "st.StudentID AS '{Student', ${Student;st}, NULL AS '}'"
                     }
                 }
             }
@@ -270,6 +265,16 @@ SELECT * FROM othertable
                     "query": {
                         "from":     "Test",
                         "select":   "*"
+                    }
+                },
+                "Test2": {
+                    "query": {
+                        "select":   "1 as '{Person', 2 as first, 3 as last, null as '{Address', null as Line1, 1 as '}}{Test', 4 as stuff, null as '}'"
+                    }
+                },
+                "Test3": {
+                    "query": {
+                        "select":   "null as '{Person', 2 as first, 3 as last, null as '{Address', null as Line1, 1 as '}}{Test', 4 as stuff, null as '}'"
                     }
                 }
             }

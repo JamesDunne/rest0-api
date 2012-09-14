@@ -131,6 +131,17 @@ names with a **method descriptor** assigned to each name.
 The method descriptor describes, among other things, the SQL query used to implement the method. This is the `query`
 property.
 
+There are several elements of a method descriptor:
+
+  * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
+  * `parameterTypes`: defines method-specific parameter types.
+  * `connection`: override the service-level DB connection.
+  * `query`: defines the parts of the SQL SELECT query to be executed (preferred for regular usage).
+  * `sql`: overrides `query` to provide raw SQL text to be executed (not preferred; for exceptional cases only).
+
+Queries
+-------
+
 The `query` property is interesting here in that is *not* one complete SELECT query in raw text form, as one might first
 expect. Rather, it is an object with properties each describing the individual clauses of a single SELECT query.
 
@@ -154,7 +165,7 @@ The final query is constructed as follows from the `query` object's properties:
     [HAVING `having`]
     [ORDER BY `orderBy`]
 
-Hopefully this break-down is clear as to where each property of the `query` object goes in the constructed SELECT query.
+Hopefully this break-down makes it clear as to where each property of the `query` object goes in the constructed SELECT query.
 The only property absolutely required of the `query` object is the `select` property.
 
 `WITH XMLNAMESPACES` is added to support SQL-XML queries. Adding a property of the form `xmlns:???` where ??? is an
@@ -172,13 +183,43 @@ one to specify raw SQL query code. Use of this property should be discouraged th
 in that one cannot write a non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can
 otherwise not be specified in the deconstructed form.
 
-There are several elements of a method descriptor:
+JSON results
+------------
 
-  * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
-  * `parameterTypes`: defines method-specific parameter types.
-  * `connection`: override the service-level DB connection.
-  * `query`: defines the parts of the SQL SELECT query to be executed.
-  * `sql`: overrides `query` to provide raw SQL text to be executed.
+All query results are serialized to an array of JSON objects. Each JSON object consitutes a single row of data where each
+column name is an object property and its value is the column's value for that row.
+
+An advanced feature called **object inflation** is available which allows a service developer to create sub-objects in the
+JSON response simply by adding specially-named columns to the query's `select` clause.
+
+In order to take advantage of this feature, simply specify a column named `{Name` where `Name` is the name of the
+sub-object you wish to create. All columns following this column will be added to this named sub-object. If the `{Name`
+column's value is NULL, the whole sub-object is assigned a null value and the column values are ignored (since they are
+presumed to be all NULL). All named sub-objects must be closed in a following column name starting with a `}`. Multiple
+sub-objects may be nested and multiple closing `}` are allowed at the start of a column name in order to close many at
+once. After any `}` characters, an opening `{Name` is allowed again in the same column name. This is to save on column
+count.
+
+Examples:
+
+```javascript
+  "select": "1 as '{Person', 2 as first, 3 as last, null as '{Address', null as Line1, 1 as '}}{Test', 4 as stuff, null as '}'"
+```
+
+This select list will generate the following JSON response:
+
+```javascript
+  {
+    "Person": {
+      "first": 2,
+      "last": 3,
+      "Address": null
+    },
+    "Test": {
+      "stuff": 4
+    }
+  }
+```
 
 Parameters
 ----------
