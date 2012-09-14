@@ -1632,7 +1632,7 @@ namespace REST0.APIService
                     return new JsonResult(new
                     {
                         hash = serviceCollection.HashHexString,
-                        service = new ServiceSerialized(desc, inclName: true, onlyMethodNames: true)
+                        service = new ServiceSerialized(desc)
                     });
                 }
                 if (path.Length > 3)

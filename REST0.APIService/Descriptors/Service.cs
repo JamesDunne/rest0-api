@@ -27,18 +27,11 @@ namespace REST0.APIService.Descriptors
         [JsonIgnore]
         readonly Service desc;
         [JsonIgnore]
-        readonly bool inclName;
-        [JsonIgnore]
-        readonly bool inclMethods;
-        [JsonIgnore]
         readonly bool onlyMethodNames;
 
-        internal ServiceSerialized(Service desc, bool inclName = false, bool inclMethods = true, bool onlyMethodNames = false)
+        internal ServiceSerialized(Service desc)
         {
             this.desc = desc;
-            this.inclName = inclName;
-            this.inclMethods = inclMethods;
-            this.onlyMethodNames = onlyMethodNames;
         }
 
         [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
@@ -46,7 +39,6 @@ namespace REST0.APIService.Descriptors
         {
             get
             {
-                if (!inclName) return null;
                 return desc.Name;
             }
         }
@@ -96,25 +88,9 @@ namespace REST0.APIService.Descriptors
         {
             get
             {
-                if (!inclMethods) return null;
-
-                if (onlyMethodNames)
-                {
-                    return desc.Methods.ToDictionary(
-                        m => m.Key,
-                        m => RestfulLink.Create("child", "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name))
-                    );
-                }
-
-                if (desc.Methods == null || desc.Methods.Count == 0) return null;
                 return desc.Methods.ToDictionary(
                     m => m.Key,
-                    m => (RestfulLink)RestfulLink.Create(
-                        "child",
-                        "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name),
-                        new MethodSerialized(m.Value)
-                    ),
-                    StringComparer.OrdinalIgnoreCase
+                    m => RestfulLink.Create("child", "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name))
                 );
             }
         }
