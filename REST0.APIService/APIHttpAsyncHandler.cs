@@ -1425,8 +1425,284 @@ namespace REST0.APIService
             return list;
         }
 
-        async Task<JsonResult> ExecuteQuery(HttpListenerRequest req, Method method)
+        #endregion
+
+        #region Main handler logic
+
+        IHttpResponseAction metaAll(SHA1Hashed<ServiceCollection> main)
         {
+            // Report all service descriptors:
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                errors = main.Value.Errors,
+                services = main.Value.Services.ToDictionary(
+                    s => s.Key,
+                    s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
+                    StringComparer.OrdinalIgnoreCase
+                )
+            });
+        }
+
+        IHttpResponseAction metaService(SHA1Hashed<ServiceCollection> main, Service svc)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                service = new ServiceSerialized(svc)
+            });
+        }
+
+        IHttpResponseAction metaMethod(SHA1Hashed<ServiceCollection> main, Method method)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
+                method = new MethodSerialized(method)
+            });
+        }
+
+        /// <summary>
+        /// Main logic.
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public async Task<IHttpResponseAction> Execute(IHttpRequestContext context)
+        {
+            var req = context.Request;
+
+            // GET requests only:
+            if (req.HttpMethod != "GET")
+                return new JsonResult(405, "Method Not Allowed");
+
+            // Capture the current service configuration values only once per connection in case they update during:
+            var main = this.services;
+            var services = main.Value.Services;
+
+            // Split the path into component parts:
+            string[] path;
+            string absPath = req.Url.AbsolutePath;
+            if (absPath == "/") path = new string[0];
+            else path = absPath.Substring(1).Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            if (path.Length == 0)
+            {
+                // TODO: some descriptive information here.
+                return new JsonResult(new { });
+            }
+
+            // What kind of a request is it?
+            if (path[0] == "meta")
+            {
+                // `/meta` request
+                if (path.Length == 1)
+                {
+                    // Report all service descriptors:
+                    return metaAll(main);
+                }
+
+                // Look up the service name:
+                string serviceName = path[1];
+
+                Service desc;
+                if (!main.Value.Services.TryGetValue(serviceName, out desc))
+                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                    {
+                        service = serviceName
+                    });
+
+                if (path.Length == 2)
+                {
+                    // Report this service descriptor:
+                    return metaService(main, desc);
+                }
+                if (path.Length > 3)
+                {
+                    return new JsonResult(400, "Too many path components supplied");
+                }
+
+                // Find method:
+                string methodName = path[2];
+                Method method;
+                if (!desc.Methods.TryGetValue(methodName, out method))
+                    return new JsonResult(400, "Unknown method name '{0}'".F(methodName), new
+                    {
+                        method = methodName
+                    });
+
+                // Report this method descriptor:
+                return metaMethod(main, method);
+            }
+            else if (path[0] == "data")
+            {
+                if (path.Length == 1)
+                {
+                    return new RedirectResponse("/meta");
+                }
+
+                // Look up the service name:
+                string serviceName = path[1];
+
+                Service desc;
+                if (!main.Value.Services.TryGetValue(serviceName, out desc))
+                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                    {
+                        service = serviceName
+                    });
+
+                if (path.Length == 2)
+                {
+                    return new RedirectResponse("/meta/{0}".F(serviceName));
+                }
+                if (path.Length > 3)
+                {
+                    return new JsonResult(400, "Too many path components supplied");
+                }
+
+                // Find method:
+                string methodName = path[2];
+                Method method;
+                if (!desc.Methods.TryGetValue(methodName, out method))
+                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
+                    {
+                        method = methodName
+                    });
+
+                // Await execution of the method and return the results:
+                var result = await dataMethod(main, method, req.QueryString);
+                return result;
+            }
+            else if (path[0] == "errors")
+            {
+                // Report errors encountered while building all service descriptors.
+                if (path.Length == 1)
+                {
+                    return errorsAll(main);
+                }
+
+                // Look up the service name:
+                string serviceName = path[1];
+
+                Service desc;
+                if (!main.Value.Services.TryGetValue(serviceName, out desc))
+                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                    {
+                        service = serviceName
+                    });
+
+                if (path.Length == 2)
+                {
+                    // Report errors encountered while building a specific service descriptor.
+                    return errorsService(main, desc);
+                }
+
+                if (path.Length > 3)
+                {
+                    return new JsonResult(400, "Too many path components supplied");
+                }
+
+                // Find method:
+                string methodName = path[2];
+                Method method;
+                if (!desc.Methods.TryGetValue(methodName, out method))
+                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
+                    {
+                        method = methodName
+                    });
+
+                // Report errors encountered while building a specific method:
+                return errorsMethod(main, desc, method);
+            }
+            else
+            {
+                return new JsonResult(400, "Unknown request type '{0}'".F(path[0]));
+            }
+        }
+
+        private IHttpResponseAction errorsMethod(SHA1Hashed<ServiceCollection> main, Service desc, Method method)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                service = desc.Name,
+                method = method.Name,
+                errors = method.Errors
+            });
+        }
+
+        private IHttpResponseAction errorsService(SHA1Hashed<ServiceCollection> main, Service desc)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                service = desc.Name,
+                errors = desc.Errors,
+                methods = desc.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
+                    m => m.Key,
+                    m => new
+                    {
+                        errors = m.Value.Errors
+                    },
+                    StringComparer.OrdinalIgnoreCase
+                )
+            });
+        }
+
+        private IHttpResponseAction errorsAll(SHA1Hashed<ServiceCollection> main)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                errors = main.Value.Errors,
+                services =
+                    main.Value.Services.Where(s => s.Value.Errors.Any() || s.Value.Methods.Any(m => m.Value.Errors.Any())).ToDictionary(
+                        s => s.Key,
+                        s => new
+                        {
+                            errors = s.Value.Errors,
+                            methods = s.Value.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
+                                m => m.Key,
+                                m => new
+                                {
+                                    errors = m.Value.Errors
+                                },
+                                StringComparer.OrdinalIgnoreCase
+                            )
+                        },
+                        StringComparer.OrdinalIgnoreCase
+                    )
+            });
+        }
+
+        async Task<IHttpResponseAction> dataMethod(SHA1Hashed<ServiceCollection> main, Method method, System.Collections.Specialized.NameValueCollection queryString)
+        {
+            // TODO: Is it deprecated?
+
+            // Check required parameters:
+            if (method.Parameters != null)
+            {
+                // Create a hash set of the query-string parameter names:
+                var q = new HashSet<string>(queryString.AllKeys, StringComparer.OrdinalIgnoreCase);
+
+                // Create a list of missing required parameter names:
+                var missingParams = new List<string>(method.Parameters.Count(p => !p.Value.IsOptional));
+                missingParams.AddRange(
+                    from p in method.Parameters
+                    where !p.Value.IsOptional && !q.Contains(p.Key)
+                    select p.Key
+                );
+
+                if (missingParams.Count > 0)
+                    return new JsonResult(400, "Missing required parameters", new
+                    {
+                        parameters = missingParams
+                    });
+
+                missingParams = null;
+            }
+
+            // Execute the query:
             if (method.Errors.Count > 0)
             {
                 return new JsonResult(500, "Bad method descriptor", new
@@ -1450,7 +1726,7 @@ namespace REST0.APIService
                         string message = null;
                         object sqlValue;
                         var paramType = (param.Value.SqlType ?? param.Value.Type);
-                        string rawValue = req.QueryString[param.Key];
+                        string rawValue = queryString[param.Key];
 
                         if (param.Value.IsOptional & (rawValue == null))
                         {
@@ -1561,250 +1837,6 @@ namespace REST0.APIService
                     swReadTime.Stop();
                     return getErrorResponse(ex);
                 }
-            }
-        }
-
-        #endregion
-
-        #region Main handler logic
-
-        /// <summary>
-        /// Main logic.
-        /// </summary>
-        /// <param name="context"></param>
-        /// <returns></returns>
-        public async Task<IHttpResponseAction> Execute(IHttpRequestContext context)
-        {
-            var req = context.Request;
-
-            // GET requests only:
-            if (req.HttpMethod != "GET")
-                return new JsonResult(405, "Method Not Allowed");
-
-            // Capture the current service configuration values only once per connection in case they update during:
-            var serviceCollection = this.services;
-            var services = serviceCollection.Value.Services;
-
-            // Split the path into component parts:
-            string[] path;
-            string absPath = req.Url.AbsolutePath;
-            if (absPath == "/") path = new string[0];
-            else path = absPath.Substring(1).Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-
-            if (path.Length == 0)
-            {
-                // TODO: some descriptive information here.
-                return new JsonResult(new { });
-            }
-
-            // What kind of a request is it?
-            if (path[0] == "meta")
-            {
-                // `/meta` request
-                if (path.Length == 1)
-                {
-                    // Report all service descriptors:
-                    return new JsonResult(new
-                    {
-                        hash = serviceCollection.HashHexString,
-                        errors = serviceCollection.Value.Errors,
-                        services = services.ToDictionary(
-                            s => s.Key,
-                            s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
-                            StringComparer.OrdinalIgnoreCase
-                        )
-                    });
-                }
-
-                // Look up the service name:
-                string serviceName = path[1];
-
-                Service desc;
-                if (!services.TryGetValue(serviceName, out desc))
-                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                    {
-                        service = serviceName
-                    });
-
-                if (path.Length == 2)
-                {
-                    // Report this service descriptor:
-                    return new JsonResult(new
-                    {
-                        hash = serviceCollection.HashHexString,
-                        service = new ServiceSerialized(desc)
-                    });
-                }
-                if (path.Length > 3)
-                {
-                    return new JsonResult(400, "Too many path components supplied");
-                }
-
-                // Find method:
-                string methodName = path[2];
-                Method method;
-                if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResult(400, "Unknown method name '{0}'".F(methodName), new
-                    {
-                        method = methodName
-                    });
-
-                // Report this method descriptor:
-                return new JsonResult(new
-                {
-                    hash = serviceCollection.HashHexString,
-                    service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
-                    method = new MethodSerialized(method, inclMethodName: true)
-                });
-            }
-            else if (path[0] == "data")
-            {
-                if (path.Length == 1)
-                {
-                    return new RedirectResponse("/meta");
-                }
-
-                // Look up the service name:
-                string serviceName = path[1];
-
-                Service desc;
-                if (!services.TryGetValue(serviceName, out desc))
-                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                    {
-                        service = serviceName
-                    });
-
-                if (path.Length == 2)
-                {
-                    return new RedirectResponse("/meta/{0}".F(serviceName));
-                }
-                if (path.Length > 3)
-                {
-                    return new JsonResult(400, "Too many path components supplied");
-                }
-
-                // Find method:
-                string methodName = path[2];
-                Method method;
-                if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
-                    {
-                        method = methodName
-                    });
-
-                // TODO: Is it deprecated?
-
-                // Check required parameters:
-                if (method.Parameters != null)
-                {
-                    // Create a hash set of the query-string parameter names:
-                    var q = new HashSet<string>(req.QueryString.AllKeys, StringComparer.OrdinalIgnoreCase);
-
-                    // Create a list of missing required parameter names:
-                    var missingParams = new List<string>(method.Parameters.Count(p => !p.Value.IsOptional));
-                    missingParams.AddRange(
-                        from p in method.Parameters
-                        where !p.Value.IsOptional && !q.Contains(p.Key)
-                        select p.Key
-                    );
-
-                    if (missingParams.Count > 0)
-                        return new JsonResult(400, "Missing required parameters", new
-                        {
-                            parameters = missingParams
-                        });
-
-                    missingParams = null;
-                }
-
-                // Execute the query:
-                var result = await ExecuteQuery(req, method);
-                return result;
-            }
-            else if (path[0] == "errors")
-            {
-                // Report errors encountered while building all service descriptors.
-                if (path.Length == 1)
-                {
-                    return new JsonResult(new
-                    {
-                        hash = serviceCollection.HashHexString,
-                        errors = serviceCollection.Value.Errors,
-                        services =
-                            serviceCollection.Value.Services.Where(s => s.Value.Errors.Any() || s.Value.Methods.Any(m => m.Value.Errors.Any())).ToDictionary(
-                                s => s.Key,
-                                s => new
-                                {
-                                    errors = s.Value.Errors,
-                                    methods = s.Value.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
-                                        m => m.Key,
-                                        m => new
-                                        {
-                                            errors = m.Value.Errors
-                                        },
-                                        StringComparer.OrdinalIgnoreCase
-                                    )
-                                },
-                                StringComparer.OrdinalIgnoreCase
-                            )
-                    });
-                }
-
-                // Look up the service name:
-                string serviceName = path[1];
-
-                Service desc;
-                if (!services.TryGetValue(serviceName, out desc))
-                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                    {
-                        service = serviceName
-                    });
-
-                if (path.Length == 2)
-                {
-                    // Report errors encountered while building a specific service descriptor.
-                    return new JsonResult(new
-                    {
-                        hash = serviceCollection.HashHexString,
-                        service = desc.Name,
-                        errors = desc.Errors,
-                        methods = desc.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
-                            m => m.Key,
-                            m => new
-                            {
-                                errors = m.Value.Errors
-                            },
-                            StringComparer.OrdinalIgnoreCase
-                        )
-                    });
-                }
-
-                if (path.Length > 3)
-                {
-                    return new JsonResult(400, "Too many path components supplied");
-                }
-
-                // Find method:
-                string methodName = path[2];
-                Method method;
-                if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
-                    {
-                        method = methodName
-                    });
-
-                // Report errors encountered while building a specific method:
-                return new JsonResult(new
-                {
-                    hash = serviceCollection.HashHexString,
-                    service = desc.Name,
-                    method = method.Name,
-                    errors = method.Errors
-                });
-            }
-            else
-            {
-                return new JsonResult(400, "Unknown request type '{0}'".F(path[0]));
             }
         }
 

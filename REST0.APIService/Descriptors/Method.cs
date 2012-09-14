@@ -37,13 +37,10 @@ namespace REST0.APIService.Descriptors
     {
         [JsonIgnore]
         readonly Method desc;
-        [JsonIgnore]
-        readonly bool inclMethodName;
 
-        internal MethodSerialized(Method desc, bool inclMethodName = false)
+        internal MethodSerialized(Method desc)
         {
             this.desc = desc;
-            this.inclMethodName = inclMethodName;
         }
 
         [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
@@ -51,7 +48,6 @@ namespace REST0.APIService.Descriptors
         {
             get
             {
-                if (!inclMethodName) return null;
                 return desc.Name;
             }
         }

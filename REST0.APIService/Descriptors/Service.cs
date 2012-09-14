@@ -26,8 +26,6 @@ namespace REST0.APIService.Descriptors
     {
         [JsonIgnore]
         readonly Service desc;
-        [JsonIgnore]
-        readonly bool onlyMethodNames;
 
         internal ServiceSerialized(Service desc)
         {
