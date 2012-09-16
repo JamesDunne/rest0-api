@@ -1373,9 +1373,16 @@ namespace REST0.APIService
             {
                 var result = new Dictionary<string, object>();
 
-                // Use a default straight mapping:
+                // Use a default mapping:
                 for (int i = 0; i < names.Length; ++i)
+                {
+                    if (result.ContainsKey(names[i]))
+                    {
+                        // TODO: add a warning about duplicate column names.
+                        continue;
+                    }
                     result.Add(names[i], values[i]);
+                }
 
                 return result;
             }
@@ -1458,131 +1465,98 @@ namespace REST0.APIService
                 return new JsonResult(new { });
             }
 
-            // What kind of a request is it?
-            if (path[0] == "meta")
+            string action = path[0];
+            // Requests are always of one of these forms:
+            //  * /{action}
+            //  * /{action}/{service}
+            //  * /{action}/{service}/{method}
+
+            if (path.Length == 1)
             {
-                // `/meta` request
-                if (path.Length == 1)
+                if (action == "meta")
                 {
+                    // `/meta` request
                     // Report all service descriptors:
                     return metaAll(main);
                 }
-
-                // Look up the service name:
-                string serviceName = path[1];
-
-                Service desc;
-                if (!main.Value.Services.TryGetValue(serviceName, out desc))
-                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                    {
-                        service = serviceName
-                    });
-
-                if (path.Length == 2)
-                {
-                    // Report this service descriptor:
-                    return metaService(main, desc);
-                }
-                if (path.Length > 3)
-                {
-                    return new JsonResult(400, "Too many path components supplied");
-                }
-
-                // Find method:
-                string methodName = path[2];
-                Method method;
-                if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResult(400, "Unknown method name '{0}'".F(methodName), new
-                    {
-                        method = methodName
-                    });
-
-                // Report this method descriptor:
-                return metaMethod(main, method);
-            }
-            else if (path[0] == "data")
-            {
-                if (path.Length == 1)
+                else if (action == "data")
                 {
                     return new RedirectResponse("/meta");
                 }
+                else if (action == "errors")
+                {
+                    return errorsAll(main);
+                }
+                else
+                {
+                    return new JsonResult(400, "Unknown request type '{0}'".F(action));
+                }
+            }
 
-                // Look up the service name:
-                string serviceName = path[1];
+            // Look up the service name:
+            string serviceName = path[1];
 
-                Service desc;
-                if (!main.Value.Services.TryGetValue(serviceName, out desc))
-                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                    {
-                        service = serviceName
-                    });
+            Service service;
+            if (!main.Value.Services.TryGetValue(serviceName, out service))
+                return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
+                {
+                    service = serviceName
+                });
 
-                if (path.Length == 2)
+            if (path.Length == 2)
+            {
+                if (action == "meta")
+                {
+                    // Report this service descriptor:
+                    return metaService(main, service);
+                }
+                else if (action == "data")
                 {
                     return new RedirectResponse("/meta/{0}".F(serviceName));
                 }
-                if (path.Length > 3)
+                else if (action == "errors")
                 {
-                    return new JsonResult(400, "Too many path components supplied");
+                    // Report errors encountered while building a specific service descriptor.
+                    return errorsService(main, service);
                 }
+                else
+                {
+                    return new JsonResult(400, "Unknown request type '{0}'".F(action));
+                }
+            }
+            if (path.Length > 3)
+            {
+                return new JsonResult(400, "Too many path components supplied");
+            }
 
-                // Find method:
-                string methodName = path[2];
-                Method method;
-                if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
-                    {
-                        method = methodName
-                    });
+            // Find method:
+            string methodName = path[2];
+            Method method;
+            if (!service.Methods.TryGetValue(methodName, out method))
+                return new JsonResult(400, "Unknown method name '{0}'".F(methodName), new
+                {
+                    method = methodName
+                });
 
+            if (action == "meta")
+            {
+                // Report this method descriptor:
+                return metaMethod(main, method);
+            }
+            else if (action == "data")
+            {
                 // Await execution of the method and return the results:
                 var result = await dataMethod(main, method, req.QueryString);
                 return result;
             }
-            else if (path[0] == "errors")
+            else if (action == "errors")
             {
-                // Report errors encountered while building all service descriptors.
-                if (path.Length == 1)
-                {
-                    return errorsAll(main);
-                }
-
-                // Look up the service name:
-                string serviceName = path[1];
-
-                Service desc;
-                if (!main.Value.Services.TryGetValue(serviceName, out desc))
-                    return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                    {
-                        service = serviceName
-                    });
-
-                if (path.Length == 2)
-                {
-                    // Report errors encountered while building a specific service descriptor.
-                    return errorsService(main, desc);
-                }
-
-                if (path.Length > 3)
-                {
-                    return new JsonResult(400, "Too many path components supplied");
-                }
-
-                // Find method:
-                string methodName = path[2];
-                Method method;
-                if (!desc.Methods.TryGetValue(methodName, out method))
-                    return new JsonResponse(400, "Unknown method name '{0}'".F(methodName), new
-                    {
-                        method = methodName
-                    });
-
                 // Report errors encountered while building a specific method:
-                return errorsMethod(main, desc, method);
+                return errorsMethod(main, service, method);
             }
             else
             {
-                return new JsonResult(400, "Unknown request type '{0}'".F(path[0]));
+                return new JsonResult(400, "Unknown request type '{0}'".F(action));
             }
         }
 
