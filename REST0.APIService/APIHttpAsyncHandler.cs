@@ -1429,40 +1429,6 @@ namespace REST0.APIService
 
         #region Main handler logic
 
-        IHttpResponseAction metaAll(SHA1Hashed<ServiceCollection> main)
-        {
-            // Report all service descriptors:
-            return new JsonResult(new
-            {
-                hash = main.HashHexString,
-                errors = main.Value.Errors,
-                services = main.Value.Services.ToDictionary(
-                    s => s.Key,
-                    s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
-                    StringComparer.OrdinalIgnoreCase
-                )
-            });
-        }
-
-        IHttpResponseAction metaService(SHA1Hashed<ServiceCollection> main, Service svc)
-        {
-            return new JsonResult(new
-            {
-                hash = main.HashHexString,
-                service = new ServiceSerialized(svc)
-            });
-        }
-
-        IHttpResponseAction metaMethod(SHA1Hashed<ServiceCollection> main, Method method)
-        {
-            return new JsonResult(new
-            {
-                hash = main.HashHexString,
-                service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
-                method = new MethodSerialized(method)
-            });
-        }
-
         /// <summary>
         /// Main logic.
         /// </summary>
@@ -1620,7 +1586,41 @@ namespace REST0.APIService
             }
         }
 
-        private IHttpResponseAction errorsMethod(SHA1Hashed<ServiceCollection> main, Service desc, Method method)
+        IHttpResponseAction metaAll(SHA1Hashed<ServiceCollection> main)
+        {
+            // Report all service descriptors:
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                errors = main.Value.Errors,
+                services = main.Value.Services.ToDictionary(
+                    s => s.Key,
+                    s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
+                    StringComparer.OrdinalIgnoreCase
+                )
+            });
+        }
+
+        IHttpResponseAction metaService(SHA1Hashed<ServiceCollection> main, Service svc)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                service = new ServiceSerialized(svc)
+            });
+        }
+
+        IHttpResponseAction metaMethod(SHA1Hashed<ServiceCollection> main, Method method)
+        {
+            return new JsonResult(new
+            {
+                hash = main.HashHexString,
+                service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
+                method = new MethodSerialized(method)
+            });
+        }
+
+        IHttpResponseAction errorsMethod(SHA1Hashed<ServiceCollection> main, Service desc, Method method)
         {
             return new JsonResult(new
             {
@@ -1631,7 +1631,7 @@ namespace REST0.APIService
             });
         }
 
-        private IHttpResponseAction errorsService(SHA1Hashed<ServiceCollection> main, Service desc)
+        IHttpResponseAction errorsService(SHA1Hashed<ServiceCollection> main, Service desc)
         {
             return new JsonResult(new
             {
@@ -1649,7 +1649,7 @@ namespace REST0.APIService
             });
         }
 
-        private IHttpResponseAction errorsAll(SHA1Hashed<ServiceCollection> main)
+        IHttpResponseAction errorsAll(SHA1Hashed<ServiceCollection> main)
         {
             return new JsonResult(new
             {
@@ -1677,7 +1677,7 @@ namespace REST0.APIService
 
         async Task<IHttpResponseAction> dataMethod(SHA1Hashed<ServiceCollection> main, Method method, System.Collections.Specialized.NameValueCollection queryString)
         {
-            // TODO: Is it deprecated?
+            // TODO: Is the method deprecated? What do we do then?
 
             // Check required parameters:
             if (method.Parameters != null)
