@@ -24,4 +24,14 @@ namespace REST0.APIService
         public byte[] Hash { get { return _hash; } }
         public string HashHexString { get { return _hash.ToHexString(); } }
     }
+
+    public static class SHA1Hashed
+    {
+        public static readonly byte[] Zero = new byte[20] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+        public static SHA1Hashed<T> Create<T>(T value, byte[] hash)
+        {
+            return new SHA1Hashed<T>(value, hash);
+        }
+    }
 }

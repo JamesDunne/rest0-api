@@ -41,8 +41,7 @@ namespace REST0.APIService
         public async Task<bool> Initialize(IHttpAsyncHostHandlerContext context)
         {
             // Initialize gets called after Configure.
-            if (!await RefreshConfigData())
-                return false;
+            await RefreshConfigData();
 
             // Let a background task refresh the config data every N seconds:
 #pragma warning disable 4014
@@ -93,15 +92,38 @@ namespace REST0.APIService
         async Task<bool> RefreshConfigData()
         {
             // Get the latest config data:
-            var config = await FetchConfigData();
-            if (config == null) return false;
+            SHA1Hashed<JObject> config;
+            try
+            {
+                // TODO: add support for Source Maps.
+                // TODO: add HTTP fetch first and failover to file, like we did before.
+                config = await FetchConfigDataFile();
+            }
+            catch (JsonReaderException jrex)
+            {
+                // Create a service collection that represents the parser error:
+                this.services = SHA1Hashed.Create(
+                    new ServiceCollection
+                    {
+                        Errors = new List<string>
+                        {
+                            "{0}".F(jrex.Message)
+                        },
+                        // Empty dictionary is easier than dealing with `null`:
+                        Services = new Dictionary<string, Service>(0, StringComparer.OrdinalIgnoreCase)
+                    },
+                    SHA1Hashed.Zero
+                );
+
+                return true;
+            }
 
             // Parse the config object:
             var tmp = ParseConfigData(config.Value);
             Debug.Assert(tmp != null);
 
             // Store the new service collection paired with the JSON hash:
-            services = new SHA1Hashed<ServiceCollection>(tmp, config.Hash);
+            this.services = SHA1Hashed.Create(tmp, config.Hash);
             return true;
         }
 
@@ -779,60 +801,33 @@ namespace REST0.APIService
             }
         }
 
-        async Task<SHA1Hashed<JObject>> FetchConfigData()
+        async Task<SHA1Hashed<JObject>> FetchConfigDataHTTP()
         {
-            string url, path;
-            bool noConfig = true;
+            string url;
 
             // Prefer to fetch over HTTP:
-            if (localConfig.TryGetSingleValue("config.Url", out url))
-            {
-                noConfig = false;
-                //Trace.WriteLine("Getting config data via HTTP");
+            if (!localConfig.TryGetSingleValue("config.Url", out url))
+                return null;
 
-                // Fire off a request now to our configuration server for our config data:
-                try
-                {
-                    // Read only raw JSON from the HTTP response, not HSON:
-                    var req = HttpWebRequest.CreateHttp(url);
-                    using (var rsp = await req.GetResponseAsync())
-                    using (var rspstr = rsp.GetResponseStream())
-                    using (var tr = new StreamReader(rspstr))
-                        return ReadJSONStream(tr);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine(ex.ToString());
+            // Fire off a request now to our configuration server for our config data:
+            // Read only raw JSON from the HTTP response, not HSON:
+            var req = HttpWebRequest.CreateHttp(url);
+            using (var rsp = await req.GetResponseAsync())
+            using (var rspstr = rsp.GetResponseStream())
+            using (var tr = new StreamReader(rspstr))
+                return ReadJSONStream(tr);
+        }
 
-                    // Fall back on loading a local file:
-                    goto loadFile;
-                }
-            }
+        async Task<SHA1Hashed<JObject>> FetchConfigDataFile()
+        {
+            string path;
 
-        loadFile:
-            if (localConfig.TryGetSingleValue("config.Path", out path))
-            {
-                noConfig = false;
-                //Trace.WriteLine("Getting config data via file");
+            if (!localConfig.TryGetSingleValue("config.Path", out path))
+                return null;
 
-                // Load the local HSON file:
-                try
-                {
-                    using (var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                        return ReadHSONStream(fs);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine(ex.ToString());
-                    return null;
-                }
-            }
-
-            // If all else fails, complain:
-            if (noConfig)
-                throw new Exception("Either '{0}' or '{1}' configuration keys are required".F("config.Url", "config.Path"));
-
-            return null;
+            // Load the local HSON file:
+            using (var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                return ReadHSONStream(fs);
         }
 
         #endregion
