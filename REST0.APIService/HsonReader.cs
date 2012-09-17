@@ -63,69 +63,21 @@ namespace System.Hson
         readonly IEnumerator<char> hsonStripper;
         readonly bool detectEncodingFromByteOrderMarks;
         readonly int bufferSize;
+        readonly string path;
 
         #region Constructors
 
-        public HsonReader(Stream stream)
-            : this(stream, Encoding.UTF8, true, 1024)
-        {
-        }
-
-        public HsonReader(string path)
-            : this(path, Encoding.UTF8, true, 1024)
-        {
-        }
-
-        public HsonReader(Stream stream, bool detectEncodingFromByteOrderMarks)
-            : this(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks, 1024)
-        {
-        }
-
-        public HsonReader(Stream stream, Encoding encoding)
-            : this(stream, encoding, true, 1024)
-        {
-        }
-
-        public HsonReader(string path, bool detectEncodingFromByteOrderMarks)
-            : this(path, Encoding.UTF8, detectEncodingFromByteOrderMarks, 1024)
-        {
-        }
-
-        public HsonReader(string path, Encoding encoding)
-            : this(path, encoding, true, 1024)
-        {
-        }
-
-        public HsonReader(Stream stream, Encoding encoding, bool detectEncodingFromByteOrderMarks)
-            : this(stream, encoding, detectEncodingFromByteOrderMarks, 1024)
-        {
-        }
-
-        public HsonReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks)
-            : this(path, encoding, detectEncodingFromByteOrderMarks, 1024)
-        {
-        }
-
-        public HsonReader(Stream stream, Encoding encoding, bool detectEncodingFromByteOrderMarks, int bufferSize)
-            : base(stream, encoding, detectEncodingFromByteOrderMarks, bufferSize)
-        {
-            this.detectEncodingFromByteOrderMarks = detectEncodingFromByteOrderMarks;
-            this.bufferSize = bufferSize;
-            this.hsonStripper = StripHSON();
-            // Defaults:
-            this.EmitterOptions = new JsonEmitterOptions() { WhitespaceHandling = JsonWhitespaceHandling.NoWhitespace };
-            this.ImportStream = defaultFileImport;
-        }
-
-        public HsonReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks, int bufferSize)
+        public HsonReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks = true, int bufferSize = 8192)
             : base(path, encoding, detectEncodingFromByteOrderMarks, bufferSize)
         {
+            this.path = path;
             this.detectEncodingFromByteOrderMarks = detectEncodingFromByteOrderMarks;
             this.bufferSize = bufferSize;
             this.hsonStripper = StripHSON();
             // Defaults:
             this.EmitterOptions = new JsonEmitterOptions() { WhitespaceHandling = JsonWhitespaceHandling.NoWhitespace };
             this.ImportStream = defaultFileImport;
+            this._segments = new List<REST0.APIService.SourceMap.Segment>(80);
         }
 
         #endregion
@@ -141,6 +93,11 @@ namespace System.Hson
         /// Gets or sets a function used to import other HSON streams via the @import("path") directive.
         /// </summary>
         public Func<string, HsonReader> ImportStream { get; set; }
+
+        /// <summary>
+        /// Gets or sets a function used to record source mapping segments.
+        /// </summary>
+        public Action<REST0.APIService.SourceMap.Segment> RecordMappingSegment { get; set; }
 
         #endregion
 
@@ -159,6 +116,28 @@ namespace System.Hson
 
         #endregion
 
+        #region Source Map
+
+        readonly List<REST0.APIService.SourceMap.Segment> _segments;
+        int _emittedCount;
+
+        /// <summary>
+        /// Gets a new instance representing the Source Map for reverse-mapping the output positions to source positions.
+        /// </summary>
+        public REST0.APIService.SourceMap.Map SourceMap
+        {
+            get
+            {
+                return new REST0.APIService.SourceMap.Map(
+                    new REST0.APIService.SourceMap.Line[1] {
+                        new REST0.APIService.SourceMap.Line(_segments.ToArray())
+                    }
+                );
+            }
+        }
+
+        #endregion
+
         #region HSON parser
 
         /// <summary>
@@ -168,16 +147,48 @@ namespace System.Hson
         /// <returns></returns>
         IEnumerator<char> StripHSON()
         {
+            // Set lastLine diff than line so that we generate the first segment in source map:
+            int lastEmitLine = 0, lastEmitCol = 1;
+            int lastReadLine = 1, lastReadCol = 1;
             int line = 1, col = 1;
+            int epos = 0;
             char lastEmitted = (char)0;
 
             // Records the last-emitted character:
-            Func<char, char> emit = (ec) => lastEmitted = ec;
+            Func<char, char> emit = (ec) =>
+            {
+                lastEmitted = ec;
+
+                // Keep track of source mapping of segments:
+                bool emitSegment = false;
+                if (lastEmitLine != lastReadLine) emitSegment = true;
+                else if (lastEmitCol != lastReadCol - 1) emitSegment = true;
+
+                // Record a new segment of columns:
+                if (emitSegment)
+                {
+                    var seg = new REST0.APIService.SourceMap.Segment(epos, this.path, lastReadLine - 1, lastReadCol - 1);
+                    _segments.Add(seg);
+                    if (RecordMappingSegment != null)
+                        RecordMappingSegment(seg);
+                }
+
+                lastEmitLine = lastReadLine;
+                lastEmitCol = lastReadCol;
+                ++_emittedCount;
+                ++epos;
+
+                return ec;
+            };
 
             // Reads the next character and keeps track of current line/column:
             Func<int> readNext = () =>
             {
+                lastReadLine = line;
+                lastReadCol = col;
+
                 int x = base.Read();
+
                 if (x == -1) return x;
                 else if (x == '\r') return x;
                 else if (x == '\n')
@@ -263,7 +274,7 @@ namespace System.Hson
                         // Parse the multiline string and emit a JSON string literal while doing so:
                         if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
                         {
-                            if (lastEmitted == ':' || lastEmitted == ',') yield return ' ';
+                            if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
                         }
 
                         // Emit the opening '"':
@@ -352,8 +363,20 @@ namespace System.Hson
                             // Call the import function to get an HsonReader to stream its output through to our caller:
                             string path = sbValue.ToString();
                             using (var imported = ImportStream(path))
+                            {
+                                int importEpos = epos;
+
+                                // Imported Source Map segments get copied to our `_segments` list + an offset:
+                                imported.RecordMappingSegment = (seg) => _segments.Add(new REST0.APIService.SourceMap.Segment(seg.TargetLinePosition + importEpos, seg.SourceName, seg.SourceLineNumber, seg.SourceLinePosition));
+
+                                // Stream all the characters in:
                                 while ((c2 = imported.Read()) != -1)
+                                {
                                     yield return (char)c2;
+                                }
+
+                                epos += imported._emittedCount;
+                            }
                         }
                         else
                         {
@@ -370,7 +393,7 @@ namespace System.Hson
                     // Parse and emit the string literal:
                     if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
                     {
-                        if (lastEmitted == ':' || lastEmitted == ',') yield return ' ';
+                        if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
                     }
                     yield return emit((char)c);
 
@@ -410,7 +433,7 @@ namespace System.Hson
                 {
                     if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
                     {
-                        if (lastEmitted == ':' || lastEmitted == ',') yield return ' ';
+                        if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
                     }
                     yield return emit((char)c);
                     c = readNext();
@@ -424,7 +447,7 @@ namespace System.Hson
                 {
                     if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
                     {
-                        if (lastEmitted == ':' || lastEmitted == ',') yield return ' ';
+                        if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
                     }
                     yield return emit((char)c);
                     c = readNext();

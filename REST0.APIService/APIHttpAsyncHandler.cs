@@ -99,7 +99,7 @@ namespace REST0.APIService
                 // TODO: add HTTP fetch first and failover to file, like we did before.
                 config = await FetchConfigDataFile();
             }
-            catch (JsonReaderException jrex)
+            catch (Exception ex)
             {
                 // Create a service collection that represents the parser error:
                 this.services = SHA1Hashed.Create(
@@ -107,7 +107,7 @@ namespace REST0.APIService
                     {
                         Errors = new List<string>
                         {
-                            "{0}".F(jrex.Message)
+                            "{0}".F(ex.Message)
                         },
                         // Empty dictionary is easier than dealing with `null`:
                         Services = new Dictionary<string, Service>(0, StringComparer.OrdinalIgnoreCase)
@@ -774,12 +774,6 @@ namespace REST0.APIService
 
         #region Loading configuration
 
-        SHA1Hashed<JObject> ReadHSONStream(Stream input)
-        {
-            using (var hsr = new HsonReader(input, UTF8.WithoutBOM, true, 8192))
-                return ReadJSONStream(hsr);
-        }
-
         SHA1Hashed<JObject> ReadJSONStream(TextReader input)
         {
 #if TRACE
@@ -826,8 +820,29 @@ namespace REST0.APIService
                 return null;
 
             // Load the local HSON file:
-            using (var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                return ReadHSONStream(fs);
+            using (var hsr = new HsonReader(path, UTF8.WithoutBOM, true, 8192))
+            {
+                try
+                {
+                    return ReadJSONStream(hsr);
+                }
+                catch (JsonReaderException jrex)
+                {
+                    // Look up the target line/col in the HSON reader's source map:
+                    var map = hsr.SourceMap;
+                    var segments = map.Lines[jrex.LineNumber - 1].Segments;
+
+                    // Do a binary-search over the segments by line position:
+                    int idx = Array.BinarySearch(segments, new REST0.APIService.SourceMap.Segment(jrex.LinePosition - 1), REST0.APIService.SourceMap.SegmentByTargetLinePosComparer.Default);
+                    if (idx < 0)
+                    {
+                        // Wasn't found exactly but we know where it should be.
+                        idx = ~idx - 1;
+                    }
+
+                    throw new Exception("{0} (line {1}, col {2}): Parser error".F(segments[idx].SourceName, segments[idx].SourceLineNumber + 1, segments[idx].SourceLinePosition + 1));
+                }
+            }
         }
 
         #endregion
