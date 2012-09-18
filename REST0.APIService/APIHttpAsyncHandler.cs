@@ -64,31 +64,6 @@ namespace REST0.APIService
             return true;
         }
 
-        #endregion
-
-        #region Parsing JSON configuration
-
-        static string getString(JProperty prop)
-        {
-            if (prop == null) return null;
-            if (prop.Value.Type == JTokenType.Null) return null;
-            return (string)((JValue)prop.Value).Value;
-        }
-
-        static bool? getBool(JProperty prop)
-        {
-            if (prop == null) return null;
-            if (prop.Value.Type == JTokenType.Null) return null;
-            return (bool?)((JValue)prop.Value).Value;
-        }
-
-        static int? getInt(JProperty prop)
-        {
-            if (prop == null) return null;
-            if (prop.Value.Type == JTokenType.Null) return null;
-            return (int?)((JValue)prop.Value).Value;
-        }
-
         async Task<bool> RefreshConfigData()
         {
             // Get the latest config data:
@@ -126,6 +101,121 @@ namespace REST0.APIService
             // Store the new service collection paired with the JSON hash:
             this.services = SHA1Hashed.Create(tmp, config.Hash);
             return true;
+        }
+
+        #endregion
+
+        #region Loading configuration
+
+        SHA1Hashed<JObject> ReadJSONStream(TextReader input)
+        {
+#if TRACE
+            // Send the JSON to Console.Out while it's being read:
+            using (var tee = new TeeTextReader(input, (line) => Console.Write(line)))
+            using (var sha1 = new SHA1TextReader(tee, UTF8.WithoutBOM))
+#else
+            using (var sha1 = new SHA1TextReader(input, UTF8.WithoutBOM))
+#endif
+            using (var jr = new JsonTextReader(sha1))
+            {
+                // NOTE(jsd): Relying on parameter evaluation order for `sha1.GetHash()` to be correct.
+                var result = new SHA1Hashed<JObject>(Json.Serializer.Deserialize<JObject>(jr), sha1.GetHash());
+#if TRACE
+                Console.WriteLine();
+                Console.WriteLine();
+#endif
+                return result;
+            }
+        }
+
+        async Task<SHA1Hashed<JObject>> FetchConfigDataHTTP()
+        {
+            string url;
+
+            // Prefer to fetch over HTTP:
+            if (!localConfig.TryGetSingleValue("config.Url", out url))
+            {
+                throw new Exception("config.Url argument was not set");
+            }
+
+            // Fire off a request now to our configuration server for our config data:
+            // Read only raw JSON from the HTTP response, not HSON:
+            var req = HttpWebRequest.CreateHttp(url);
+            using (var rsp = await req.GetResponseAsync())
+            using (var rspstr = rsp.GetResponseStream())
+            using (var tr = new StreamReader(rspstr))
+                return ReadJSONStream(tr);
+        }
+
+        async Task<SHA1Hashed<JObject>> FetchConfigDataFile()
+        {
+            string path;
+
+            if (!localConfig.TryGetSingleValue("config.Path", out path))
+            {
+                throw new Exception("config.Path argument was not set");
+            }
+
+            // Load the local HSON file:
+            using (var hsr = new HsonReader(path, UTF8.WithoutBOM, true, 8192))
+            {
+                try
+                {
+                    return ReadJSONStream(hsr);
+                }
+                catch (JsonReaderException jrex)
+                {
+                    int targetLineNumber = jrex.LineNumber;
+                    if (targetLineNumber > 0) targetLineNumber--;
+                    int targetLinePosition = jrex.LinePosition;
+                    if (targetLinePosition > 0) targetLinePosition--;
+
+                    // Look up the target line/col in the HSON reader's source map:
+                    var map = hsr.SourceMap;
+                    var segments = map.Lines[targetLineNumber].Segments;
+
+                    // Do a binary-search over the segments by line position:
+                    int idx = Array.BinarySearch(segments, new REST0.APIService.SourceMap.Segment(targetLinePosition), REST0.APIService.SourceMap.SegmentByTargetLinePosComparer.Default);
+                    if (idx < 0)
+                    {
+                        // Wasn't found exactly but we know where it should be.
+                        idx = ~idx - 1;
+                    }
+
+                    // Pull out the error message:
+                    string message = jrex.Message;
+                    int lasti = jrex.Message.IndexOf(" Path '");
+                    if (lasti >= 0)
+                        message = message.Substring(0, lasti);
+
+                    throw new Exception("{0} (line {1}, col {2}): {3}".F(segments[idx].SourceName, segments[idx].SourceLineNumber + 1, segments[idx].SourceLinePosition + 1, message));
+                }
+            }
+        }
+
+        #endregion
+
+        #region Parsing JSON configuration
+
+        static string getString(JProperty prop)
+        {
+            if (prop == null) return null;
+            if (prop.Value.Type == JTokenType.Null) return null;
+            return (string)((JValue)prop.Value).Value;
+        }
+
+        static bool? getBool(JProperty prop)
+        {
+            if (prop == null) return null;
+            if (prop.Value.Type == JTokenType.Null) return null;
+            return (bool?)((JValue)prop.Value).Value;
+        }
+
+        static int? getInt(JProperty prop)
+        {
+            if (prop == null) return null;
+            if (prop.Value.Type == JTokenType.Null) return null;
+            return (int?)((JValue)prop.Value).Value;
         }
 
         ServiceCollection ParseConfigData(JObject joConfig)
@@ -738,85 +828,6 @@ namespace REST0.APIService
                     Length = length,
                     Scale = scale,
                 };
-            }
-        }
-
-        #endregion
-
-        #region Loading configuration
-
-        SHA1Hashed<JObject> ReadJSONStream(TextReader input)
-        {
-#if TRACE
-            // Send the JSON to Console.Out while it's being read:
-            using (var tee = new TeeTextReader(input, (line) => Console.Write(line)))
-            using (var sha1 = new SHA1TextReader(tee, UTF8.WithoutBOM))
-#else
-            using (var sha1 = new SHA1TextReader(input, UTF8.WithoutBOM))
-#endif
-            using (var jr = new JsonTextReader(sha1))
-            {
-                // NOTE(jsd): Relying on parameter evaluation order for `sha1.GetHash()` to be correct.
-                var result = new SHA1Hashed<JObject>(Json.Serializer.Deserialize<JObject>(jr), sha1.GetHash());
-#if TRACE
-                Console.WriteLine();
-                Console.WriteLine();
-#endif
-                return result;
-            }
-        }
-
-        async Task<SHA1Hashed<JObject>> FetchConfigDataHTTP()
-        {
-            string url;
-
-            // Prefer to fetch over HTTP:
-            if (!localConfig.TryGetSingleValue("config.Url", out url))
-            {
-                throw new Exception("config.Url argument was not set");
-            }
-
-            // Fire off a request now to our configuration server for our config data:
-            // Read only raw JSON from the HTTP response, not HSON:
-            var req = HttpWebRequest.CreateHttp(url);
-            using (var rsp = await req.GetResponseAsync())
-            using (var rspstr = rsp.GetResponseStream())
-            using (var tr = new StreamReader(rspstr))
-                return ReadJSONStream(tr);
-        }
-
-        async Task<SHA1Hashed<JObject>> FetchConfigDataFile()
-        {
-            string path;
-
-            if (!localConfig.TryGetSingleValue("config.Path", out path))
-            {
-                throw new Exception("config.Path argument was not set");
-            }
-
-            // Load the local HSON file:
-            using (var hsr = new HsonReader(path, UTF8.WithoutBOM, true, 8192))
-            {
-                try
-                {
-                    return ReadJSONStream(hsr);
-                }
-                catch (JsonReaderException jrex)
-                {
-                    // Look up the target line/col in the HSON reader's source map:
-                    var map = hsr.SourceMap;
-                    var segments = map.Lines[jrex.LineNumber - 1].Segments;
-
-                    // Do a binary-search over the segments by line position:
-                    int idx = Array.BinarySearch(segments, new REST0.APIService.SourceMap.Segment(jrex.LinePosition - 1), REST0.APIService.SourceMap.SegmentByTargetLinePosComparer.Default);
-                    if (idx < 0)
-                    {
-                        // Wasn't found exactly but we know where it should be.
-                        idx = ~idx - 1;
-                    }
-
-                    throw new Exception("{0} (line {1}, col {2}): Parser error".F(segments[idx].SourceName, segments[idx].SourceLineNumber + 1, segments[idx].SourceLinePosition + 1));
-                }
             }
         }
 
