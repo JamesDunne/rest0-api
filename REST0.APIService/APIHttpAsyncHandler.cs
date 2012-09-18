@@ -36,7 +36,7 @@ namespace REST0.APIService
         /// <summary>
         /// Refresh configuration on every N-second mark on the clock.
         /// </summary>
-        const int refreshInterval = 10;
+        const int refreshInterval = 5;
 
         public async Task<bool> Initialize(IHttpAsyncHostHandlerContext context)
         {
@@ -1463,6 +1463,15 @@ namespace REST0.APIService
             var main = this.services;
             var services = main.Value.Services;
 
+            // Not getting any further than this with severe errors:
+            if (main.Value.Errors.Count > 0)
+            {
+                return new JsonResult(500, "Severe errors encountered", new
+                {
+                    errors = main.Value.Errors
+                });
+            }
+
             // Split the path into component parts:
             string[] path;
             string absPath = req.Url.AbsolutePath;
@@ -1472,10 +1481,18 @@ namespace REST0.APIService
             if (path.Length == 0)
             {
                 // TODO: some descriptive information here.
-                return new JsonResult(new { });
+                return new JsonResult(new {
+                    hash = main.HashHexString,
+                    links = new RestfulLink[]
+                    {
+                        RestfulLink.Create("meta", "/errors"),
+                        RestfulLink.Create("meta", "/meta")
+                    }
+                });
             }
 
             string action = path[0];
+
             // Requests are always of one of these forms:
             //  * /{action}
             //  * /{action}/{service}
@@ -1577,7 +1594,7 @@ namespace REST0.APIService
             {
                 hash = main.HashHexString,
                 errors = main.Value.Errors,
-                services = main.Value.Services.ToDictionary(
+                serviceLinks = main.Value.Services.ToDictionary(
                     s => s.Key,
                     s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
                     StringComparer.OrdinalIgnoreCase
@@ -1599,7 +1616,9 @@ namespace REST0.APIService
             return new JsonResult(new
             {
                 hash = main.HashHexString,
-                service = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
+                serviceLink = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
+                selfLink = RestfulLink.Create("meta", "/meta/{0}/{1}".F(method.Service.Name, method.Name)),
+                dataLink = RestfulLink.Create("data", "/data/{0}/{1}".F(method.Service.Name, method.Name)),
                 method = new MethodSerialized(method)
             });
         }
@@ -1680,7 +1699,11 @@ namespace REST0.APIService
                 if (missingParams.Count > 0)
                     return new JsonResult(400, "Missing required parameters", new
                     {
-                        parameters = missingParams
+                        parameters = missingParams.ToDictionary(
+                            p => p,
+                            p => new ParameterSerialized(method.Parameters[p]),
+                            StringComparer.OrdinalIgnoreCase
+                        )
                     });
 
                 missingParams = null;

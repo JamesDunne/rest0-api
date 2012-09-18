@@ -81,8 +81,8 @@ namespace REST0.APIService.Descriptors
             }
         }
 
-        [JsonProperty("methods", NullValueHandling = NullValueHandling.Ignore)]
-        public IDictionary<string, RestfulLink> Methods
+        [JsonProperty("methodLinks", NullValueHandling = NullValueHandling.Ignore)]
+        public IDictionary<string, RestfulLink> MethodLinks
         {
             get
             {
