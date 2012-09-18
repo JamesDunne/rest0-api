@@ -1,0 +1,65 @@
+// Some error detection/reporting test cases:
+"error-tests": {
+    "$": null,
+    "parameterTypes": null,
+    "methods": {
+        "Test1": {
+            "parameters": {
+                "id": { "sqlName": "@id", "type": "nonexistent" }
+            }
+        },
+        "Test2": {
+            "parameters": {
+                "id": { "sqlName": "@id", "sqlType": "int" }
+            }
+        },
+        "Test3": {
+            "query": {}
+        },
+        "Test4": {
+            "query": {
+                "select": "* from test"
+            }
+        },
+        "Test5": {
+            "query": {
+                "select":   "*",
+                "from":     "test where 1 = 1"
+            }
+        },
+        "Test6": {
+            "query": {
+                "select":   "*",
+                "from":     "test",
+                "where":    "1 = 1 group by 1"
+            }
+        },
+        "Test7": {
+            "query": {
+                "select":   "*",
+                "from":     "test",
+                "where":    "1 = 1",
+                "groupBy":  "1 having count(1) > 1"
+            }
+        },
+        "Test8": {
+            "query": {
+                "select":   "*",
+                "from":     "test",
+                "where":    "1 = 1",
+                "groupBy":  "1",
+                "having":   "count(1) > 1 order by 1"
+            }
+        },
+        "Test9": {
+            "query": {
+                "select":   "*",
+                "from":     "test",
+                "where":    "1 = 1",
+                "groupBy":  "1",
+                "having":   "count(1) > 1",
+                "orderBy":  "1 for xml auto"
+            }
+        }
+    }
+}

@@ -92,6 +92,7 @@
     <None Include="packages.config" />
     <None Include="config.hson" />
     <None Include="sis%3bcore%3bv5.hson" />
+    <Content Include="success-tests.hson" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.5">

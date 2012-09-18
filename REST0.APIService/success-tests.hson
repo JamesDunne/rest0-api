@@ -1,0 +1,91 @@
+"tests": {
+    "connection": {
+        "dataSource":       "(local)\\SQLEXPRESS",
+        "initialCatalog":   "APITest"
+    },
+    "methods": {
+        "Test1": {
+            "parameters": {
+                "t01": { "sqlType": "bigint" },
+                "t02": { "sqlType": "binary" },
+                "t03": { "sqlType": "bit" },
+                "t04": { "sqlType": "char" },
+                "t05": { "sqlType": "date" },
+                "t06": { "sqlType": "datetime" },
+                "t07": { "sqlType": "datetime2" },
+                "t08": { "sqlType": "datetimeoffset" },
+                "t09": { "sqlType": "decimal" },
+                "t10": { "sqlType": "float" },
+                "t11": { "sqlType": "geography" },
+                "t12": { "sqlType": "geometry" },
+                "t13": { "sqlType": "hierarchyid" },
+                "t14": { "sqlType": "image" },
+                "t15": { "sqlType": "int" },
+                "t16": { "sqlType": "money" },
+                "t17": { "sqlType": "nchar" },
+                "t18": { "sqlType": "ntext" },
+                "t19": { "sqlType": "numeric" },
+                "t20": { "sqlType": "nvarchar" },
+                "t21": { "sqlType": "ntext" },
+                "t22": { "sqlType": "real" },
+                "t23": { "sqlType": "smalldatetime" },
+                "t24": { "sqlType": "smallint" },
+                "t25": { "sqlType": "smallmoney" },
+                "t26": { "sqlType": "sql_variant" },
+                "t27": { "sqlType": "text" },
+                "t28": { "sqlType": "time" },
+                "t29": { "sqlType": "timestamp" },
+                "t30": { "sqlType": "tinyint" },
+                "t31": { "sqlType": "uniqueidentifier" },
+                "t32": { "sqlType": "varbinary" },
+                "t33": { "sqlType": "varchar" },
+                "t34": { "sqlType": "xml" }
+            },
+// test URL: http://localhost/data/tests/Test1?t01=%00&t02=%00&t03=%00&t04=%00&t05=%00&t06=%00&t07=%00&t08=%00&t09=%00&t10=%00&t11=%00&t12=%00&t13=%00&t14=%00&t15=%00&t16=%00&t17=%00&t18=%00&t19=%00&t20=%00&t21=%00&t22=%00&t23=%00&t24=%00&t25=%00&t26=%00&t27=%00&t28=%00&t29=%00&t30=%00&t31=%00&t32=%00&t33=%00&t34=%00
+            "query": {
+                "from":     "Test",
+                "select":   "*"
+            }
+        },
+        "Test2": {
+            "query": {
+                "select":   "1 AS id, 'james' AS first, 'dunne' AS last, 2 AS id, '123 fake st' AS line1, 1 AS test, NULL AS stuff"
+            },
+            "result": {
+                "Person": {
+                    "<exists>": "id",
+                    "FirstName": "first",
+                    "LastName": "last",
+                    "Address": {
+                        "<exists>": "id`2",
+                        "Line1": "line1"
+                    }
+                },
+                "Test": {
+                    "<exists>": "test",
+                    "stuff": "stuff"
+                }
+            }
+        },
+        "Test3": {
+            "query": {
+                "select":   "1 AS id, 'james' AS first, 'dunne' AS last, NULL AS id, '123 fake st' AS line1, 1 AS test, 0.45 AS stuff"
+            },
+            "result": {
+                "Person": {
+                    "<exists>": "id",
+                    "FirstName": "first",
+                    "LastName": "last",
+                    "Address": {
+                        "<exists>": "id`2",
+                        "Line1": "line1"
+                    }
+                },
+                "Test": {
+                    "<exists>": "test",
+                    "stuff": "stuff"
+                }
+            }
+        }
+    }
+}

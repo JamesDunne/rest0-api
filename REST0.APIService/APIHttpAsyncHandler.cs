@@ -95,7 +95,6 @@ namespace REST0.APIService
             SHA1Hashed<JObject> config;
             try
             {
-                // TODO: add support for Source Maps.
                 // TODO: add HTTP fetch first and failover to file, like we did before.
                 config = await FetchConfigDataFile();
             }
@@ -412,153 +411,123 @@ namespace REST0.APIService
                                     param.Type = paramType;
                                 }
 
-                                var jpDefault = joParam.Property("default");
-                                if (jpDefault != null && isOptional)
+                                if (isOptional)
                                 {
-                                    // Parse the default value into a SqlValue:
-                                    param.DefaultValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
+                                    var jpDefault = joParam.Property("default");
+                                    if (jpDefault != null)
+                                        // Parse the default value into a SqlValue:
+                                        param.DefaultValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
+                                    else
+                                        param.DefaultValue = DBNull.Value;
                                 }
 
                                 method.Parameters.Add(jpParam.Name, param);
                             }
                         }
 
-                        // Check what type of query descriptor this is:
-                        var sql = getString(joMethod.Property("sql")).Interpolate(tokenLookup);
-                        if (sql != null)
+                        // Parse query:
+                        var jpQuery = joMethod.Property("query");
+                        if (jpQuery != null)
                         {
-                            // Raw SQL query; it must be a SELECT query but we can't validate that without some nasty parsing.
+                            var joQuery = (JObject)jpQuery.Value;
+                            method.Query = new Query();
 
-                            // Remove comments from the code and trim leading and trailing whitespace:
-                            sql = stripSQLComments(sql).Trim();
+                            // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
 
-                            // Crude attempts to verify a SELECT form:
-                            // A better approach would be to parse the root-level keywords (ignoring subqueries)
-                            // and skipping WITH.
-                            if (sql.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) ||
-                                sql.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) ||
-                                sql.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase) ||
-                                sql.StartsWith("MERGE", StringComparison.OrdinalIgnoreCase) ||
-                                sql.StartsWith("DROP", StringComparison.OrdinalIgnoreCase) ||
-                                sql.StartsWith("CREATE", StringComparison.OrdinalIgnoreCase) ||
-                                sql.StartsWith("ALTER", StringComparison.OrdinalIgnoreCase))
+                            // 'select' is required:
+                            method.Query.Select = getString(joQuery.Property("select")).Interpolate(tokenLookup);
+                            if (String.IsNullOrEmpty(method.Query.Select))
                             {
-                                method.Errors.Add("Query must be a SELECT query.");
+                                method.Errors.Add("A `select` clause is required");
                             }
-                            else
+
+                            // The rest are optional:
+                            method.Query.From = getString(joQuery.Property("from")).Interpolate(tokenLookup);
+                            method.Query.Where = getString(joQuery.Property("where")).Interpolate(tokenLookup);
+                            method.Query.GroupBy = getString(joQuery.Property("groupBy")).Interpolate(tokenLookup);
+                            method.Query.Having = getString(joQuery.Property("having")).Interpolate(tokenLookup);
+                            method.Query.OrderBy = getString(joQuery.Property("orderBy")).Interpolate(tokenLookup);
+                            method.Query.WithCTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
+                            method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
+
+                            // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
+                            var xmlNamespaces = new Dictionary<string, string>(StringComparer.Ordinal);
+                            foreach (var jpXmlns in joQuery.Properties())
                             {
-                                method.Query = new Query
-                                {
-                                    SQL = sql
-                                };
+                                if (!jpXmlns.Name.StartsWith("xmlns:")) continue;
+                                var prefix = jpXmlns.Name.Substring(6);
+                                var ns = getString(jpXmlns).Interpolate(tokenLookup);
+                                xmlNamespaces.Add(prefix, ns);
                             }
-                        }
-                        else
-                        {
-                            // Parse query:
-                            var jpQuery = joMethod.Property("query");
-                            if (jpQuery != null)
+                            if (xmlNamespaces.Count > 0) method.Query.XMLNamespaces = xmlNamespaces;
+
+                            // Strip out all SQL comments:
+                            string withCTEidentifier = stripSQLComments(method.Query.WithCTEidentifier);
+                            string withCTEexpression = stripSQLComments(method.Query.WithCTEexpression);
+                            string select = stripSQLComments(method.Query.Select);
+                            string from = stripSQLComments(method.Query.From);
+                            string where = stripSQLComments(method.Query.Where);
+                            string groupBy = stripSQLComments(method.Query.GroupBy);
+                            string having = stripSQLComments(method.Query.Having);
+                            string orderBy = stripSQLComments(method.Query.OrderBy);
+
+                            // Allocate a StringBuilder with enough space to construct the query:
+                            StringBuilder qb = new StringBuilder(
+                                (withCTEidentifier ?? String.Empty).Length + (withCTEexpression ?? String.Empty).Length + ";WITH  AS ()\r\n".Length
+                              + (select ?? String.Empty).Length + "SELECT ".Length
+                              + (from ?? String.Empty).Length + "\r\nFROM ".Length
+                              + (where ?? String.Empty).Length + "\r\nWHERE ".Length
+                              + (groupBy ?? String.Empty).Length + "\r\nGROUP BY ".Length
+                              + (having ?? String.Empty).Length + "\r\nHAVING ".Length
+                              + (orderBy ?? String.Empty).Length + "\r\nORDER BY ".Length
+                            );
+
+                            // This is a very conservative approach and will lead to false-positives for things like EXISTS() and sub-queries:
+                            if (containsSQLkeywords(select, "from", "into", "where", "group", "having", "order", "for"))
+                                method.Errors.Add("SELECT clause cannot contain FROM, INTO, WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
+                            if (containsSQLkeywords(from, "where", "group", "having", "order", "for"))
+                                method.Errors.Add("FROM clause cannot contain WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
+                            if (containsSQLkeywords(where, "group", "having", "order", "for"))
+                                method.Errors.Add("WHERE clause cannot contain GROUP BY, HAVING, ORDER BY, or FOR");
+                            if (containsSQLkeywords(groupBy, "having", "order", "for"))
+                                method.Errors.Add("GROUP BY clause cannot contain HAVING, ORDER BY, or FOR");
+                            if (containsSQLkeywords(having, "order", "for"))
+                                method.Errors.Add("HAVING clause cannot contain ORDER BY or FOR");
+                            if (containsSQLkeywords(orderBy, "for"))
+                                method.Errors.Add("ORDER BY clause cannot contain FOR");
+
+                            if (method.Errors.Count == 0)
                             {
-                                var joQuery = (JObject)jpQuery.Value;
-                                method.Query = new Query();
-
-                                // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
-
-                                // 'select' is required:
-                                method.Query.Select = getString(joQuery.Property("select")).Interpolate(tokenLookup);
-                                if (String.IsNullOrEmpty(method.Query.Select))
+                                // Construct the query:
+                                bool didSemi = false;
+                                if (xmlNamespaces.Count > 0)
                                 {
-                                    method.Errors.Add("A `select` clause is required");
+                                    didSemi = true;
+                                    qb.AppendLine(";WITH XMLNAMESPACES (");
+                                    using (var en = xmlNamespaces.GetEnumerator())
+                                        for (int i = 0; en.MoveNext(); ++i)
+                                        {
+                                            var xmlns = en.Current;
+                                            qb.AppendFormat("  '{0}' AS {1}", xmlns.Value.Replace("\'", "\'\'"), xmlns.Key);
+                                            if (i < xmlNamespaces.Count - 1) qb.Append(",\r\n");
+                                            else qb.Append("\r\n");
+                                        }
+                                    qb.Append(")\r\n");
                                 }
-
-                                // The rest are optional:
-                                method.Query.From = getString(joQuery.Property("from")).Interpolate(tokenLookup);
-                                method.Query.Where = getString(joQuery.Property("where")).Interpolate(tokenLookup);
-                                method.Query.GroupBy = getString(joQuery.Property("groupBy")).Interpolate(tokenLookup);
-                                method.Query.Having = getString(joQuery.Property("having")).Interpolate(tokenLookup);
-                                method.Query.OrderBy = getString(joQuery.Property("orderBy")).Interpolate(tokenLookup);
-                                method.Query.WithCTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
-                                method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
-
-                                // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
-                                var xmlNamespaces = new Dictionary<string, string>(StringComparer.Ordinal);
-                                foreach (var jpXmlns in joQuery.Properties())
+                                if (!String.IsNullOrEmpty(withCTEidentifier) && !String.IsNullOrEmpty(withCTEexpression))
                                 {
-                                    if (!jpXmlns.Name.StartsWith("xmlns:")) continue;
-                                    var prefix = jpXmlns.Name.Substring(6);
-                                    var ns = getString(jpXmlns).Interpolate(tokenLookup);
-                                    xmlNamespaces.Add(prefix, ns);
+                                    if (!didSemi) qb.Append(';');
+                                    qb.AppendFormat("WITH {0} AS (\r\n{1}\r\n)\r\n", withCTEidentifier, withCTEexpression);
                                 }
-                                if (xmlNamespaces.Count > 0) method.Query.XMLNamespaces = xmlNamespaces;
+                                qb.AppendFormat("SELECT {0}", select);
+                                if (!String.IsNullOrEmpty(from)) qb.AppendFormat("\r\nFROM {0}", from);
+                                if (!String.IsNullOrEmpty(where)) qb.AppendFormat("\r\nWHERE {0}", where);
+                                if (!String.IsNullOrEmpty(groupBy)) qb.AppendFormat("\r\nGROUP BY {0}", groupBy);
+                                if (!String.IsNullOrEmpty(having)) qb.AppendFormat("\r\nHAVING {0}", having);
+                                if (!String.IsNullOrEmpty(orderBy)) qb.AppendFormat("\r\nORDER BY {0}", orderBy);
 
-                                // Strip out all SQL comments:
-                                string withCTEidentifier = stripSQLComments(method.Query.WithCTEidentifier);
-                                string withCTEexpression = stripSQLComments(method.Query.WithCTEexpression);
-                                string select = stripSQLComments(method.Query.Select);
-                                string from = stripSQLComments(method.Query.From);
-                                string where = stripSQLComments(method.Query.Where);
-                                string groupBy = stripSQLComments(method.Query.GroupBy);
-                                string having = stripSQLComments(method.Query.Having);
-                                string orderBy = stripSQLComments(method.Query.OrderBy);
-
-                                // Allocate a StringBuilder with enough space to construct the query:
-                                StringBuilder qb = new StringBuilder(
-                                    (withCTEidentifier ?? String.Empty).Length + (withCTEexpression ?? String.Empty).Length + ";WITH  AS ()\r\n".Length
-                                  + (select ?? String.Empty).Length + "SELECT ".Length
-                                  + (from ?? String.Empty).Length + "\r\nFROM ".Length
-                                  + (where ?? String.Empty).Length + "\r\nWHERE ".Length
-                                  + (groupBy ?? String.Empty).Length + "\r\nGROUP BY ".Length
-                                  + (having ?? String.Empty).Length + "\r\nHAVING ".Length
-                                  + (orderBy ?? String.Empty).Length + "\r\nORDER BY ".Length
-                                );
-
-                                // This is a very conservative approach and will lead to false-positives for things like EXISTS() and sub-queries:
-                                if (containsSQLkeywords(select, "from", "into", "where", "group", "having", "order", "for"))
-                                    method.Errors.Add("SELECT clause cannot contain FROM, INTO, WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
-                                if (containsSQLkeywords(from, "where", "group", "having", "order", "for"))
-                                    method.Errors.Add("FROM clause cannot contain WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
-                                if (containsSQLkeywords(where, "group", "having", "order", "for"))
-                                    method.Errors.Add("WHERE clause cannot contain GROUP BY, HAVING, ORDER BY, or FOR");
-                                if (containsSQLkeywords(groupBy, "having", "order", "for"))
-                                    method.Errors.Add("GROUP BY clause cannot contain HAVING, ORDER BY, or FOR");
-                                if (containsSQLkeywords(having, "order", "for"))
-                                    method.Errors.Add("HAVING clause cannot contain ORDER BY or FOR");
-                                if (containsSQLkeywords(orderBy, "for"))
-                                    method.Errors.Add("ORDER BY clause cannot contain FOR");
-
-                                if (method.Errors.Count == 0)
-                                {
-                                    // Construct the query:
-                                    bool didSemi = false;
-                                    if (xmlNamespaces.Count > 0)
-                                    {
-                                        didSemi = true;
-                                        qb.AppendLine(";WITH XMLNAMESPACES (");
-                                        using (var en = xmlNamespaces.GetEnumerator())
-                                            for (int i = 0; en.MoveNext(); ++i)
-                                            {
-                                                var xmlns = en.Current;
-                                                qb.AppendFormat("  '{0}' AS {1}", xmlns.Value.Replace("\'", "\'\'"), xmlns.Key);
-                                                if (i < xmlNamespaces.Count - 1) qb.Append(",\r\n");
-                                                else qb.Append("\r\n");
-                                            }
-                                        qb.Append(")\r\n");
-                                    }
-                                    if (!String.IsNullOrEmpty(withCTEidentifier) && !String.IsNullOrEmpty(withCTEexpression))
-                                    {
-                                        if (!didSemi) qb.Append(';');
-                                        qb.AppendFormat("WITH {0} AS (\r\n{1}\r\n)\r\n", withCTEidentifier, withCTEexpression);
-                                    }
-                                    qb.AppendFormat("SELECT {0}", select);
-                                    if (!String.IsNullOrEmpty(from)) qb.AppendFormat("\r\nFROM {0}", from);
-                                    if (!String.IsNullOrEmpty(where)) qb.AppendFormat("\r\nWHERE {0}", where);
-                                    if (!String.IsNullOrEmpty(groupBy)) qb.AppendFormat("\r\nGROUP BY {0}", groupBy);
-                                    if (!String.IsNullOrEmpty(having)) qb.AppendFormat("\r\nHAVING {0}", having);
-                                    if (!String.IsNullOrEmpty(orderBy)) qb.AppendFormat("\r\nORDER BY {0}", orderBy);
-
-                                    // Assign the constructed query:
-                                    method.Query.SQL = qb.ToString();
-                                }
+                                // Assign the constructed query:
+                                method.Query.SQL = qb.ToString();
                             }
                         }
 
@@ -1481,7 +1450,8 @@ namespace REST0.APIService
             if (path.Length == 0)
             {
                 // TODO: some descriptive information here.
-                return new JsonResult(new {
+                return new JsonResult(new
+                {
                     hash = main.HashHexString,
                     links = new RestfulLink[]
                     {
@@ -1768,6 +1738,7 @@ namespace REST0.APIService
 
                         // Add the SQL parameter:
                         var sqlprm = cmd.Parameters.Add(param.Value.Name, paramType.SqlDbType);
+                        sqlprm.IsNullable = param.Value.IsOptional;
                         if (paramType.Length != null) sqlprm.Precision = (byte)paramType.Length.Value;
                         if (paramType.Scale != null) sqlprm.Scale = (byte)paramType.Scale.Value;
                         sqlprm.SqlValue = sqlValue;

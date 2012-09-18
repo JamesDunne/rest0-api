@@ -8,14 +8,8 @@
             "query": {
                 "from":         "${Student} st",
                 "where":        "(st.LastName = @lastName)",
-                "select":       "st.StudentID AS __obj$Student, ${Student;st}"
+                "select":       "${Student;st}"
             }
-        },
-        "TestRawSQL": {
-            // Raw SQL code is fine, so long as it is a SELECT query:
-            "sql":  @"
-SELECT  ${Student;st}
-FROM    ${Student} st WITH (NOLOCK)"
         }
     }
 }

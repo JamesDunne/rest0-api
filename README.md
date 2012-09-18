@@ -25,11 +25,9 @@ Let's take a look at a very simple example data request to get a feel for what t
 {
   "results": [
     {
-      "Student": {
-        "StudentID": 1,
-        "FirstName": "James",
-        "LastName": "Dunne"
-      }
+      "StudentID": 1,
+      "FirstName": "James",
+      "LastName": "Dunne"
     }
   ]
 }

@@ -2,7 +2,7 @@
   This is a services descriptor configuration file encoded in HSON, a human-readable, extended JSON format
   with support for comments and multi-line string literals.
 
-  A multiline string literal is defined as @"..." and has the same semantics as C#'s multiline string literal.
+  A multi-line string literal is defined as @"..." and has the same semantics as C#'s multi-line string literal.
   Comments may appear in block-format like this, or in single-line format like below.
 
   In order to expedite parsing, forward-references are not allowed. Services must be defined
@@ -93,17 +93,15 @@
                 // Define a Questionable method to demonstrate deprecation:
                 "Questionable": {
                     "parameters": {
-                        "id":       { "sqlName": "@id",     "type": "StudentID" },
-                        "test":     { "sqlName": "@test",   "type": "Grade",    "optional": true }
+                        "id":       { "sqlName": "@id",     "type": "StudentID",    "optional": true },
+                        "test":     { "sqlName": "@test",   "type": "Grade",        "optional": true }
                     },
                     "query": {
                         // Adding a property name starting with "xmlns:" will add a ;WITH XMLNAMESPACES directive
-                        // useful for selecting data from `xml` typed columns in your query. This example does not
-                        // use it currently.
-                        "xmlns:sis":    "http://sis.example.org/sis/core/v1",
-                        "from":         "${Student} st",
-                        "where":        "st.WrongID = @id",
-                        "select":       "st.StudentID"
+                        // useful for selecting data from `xml` typed columns in your query.
+                        "xmlns:sis":    "http://sis.example.org/v1",
+                        "from":         "Test t",
+                        "select":       "t.Test34.query('/sis:*') AS SISelements"
                     }
                 }
             }
@@ -145,169 +143,7 @@
         // into more manageable divisions. `@import` directives may be placed at any point in the
         // HSON document, so long as the final result produces a well-formed JSON result.
         @import("../../sis;core;v5.hson"),
-
-        // Some error detection/reporting test cases:
-        "error-tests": {
-            "$": null,
-            "parameterTypes": null,
-            "methods": {
-                "Test1": {
-                    "parameters": {
-                        "id": { "sqlName": "@id", "type": "nonexistent" }
-                    }
-                },
-                "Test2": {
-                    "parameters": {
-                        "id": { "sqlName": "@id", "sqlType": "int" }
-                    }
-                },
-                "Test3": {
-                    "query": {}
-                },
-                "Test4": {
-                    "query": {
-                        "select": "* from test"
-                    }
-                },
-                "Test5": {
-                    "query": {
-                        "select":   "*",
-                        "from":     "test where 1 = 1"
-                    }
-                },
-                "Test6": {
-                    "query": {
-                        "select":   "*",
-                        "from":     "test",
-                        "where":    "1 = 1 group by 1"
-                    }
-                },
-                "Test7": {
-                    "query": {
-                        "select":   "*",
-                        "from":     "test",
-                        "where":    "1 = 1",
-                        "groupBy":  "1 having count(1) > 1"
-                    }
-                },
-                "Test8": {
-                    "query": {
-                        "select":   "*",
-                        "from":     "test",
-                        "where":    "1 = 1",
-                        "groupBy":  "1",
-                        "having":   "count(1) > 1 order by 1"
-                    }
-                },
-                "Test9": {
-                    "query": {
-                        "select":   "*",
-                        "from":     "test",
-                        "where":    "1 = 1",
-                        "groupBy":  "1",
-                        "having":   "count(1) > 1",
-                        "orderBy":  "1 for xml auto"
-                    }
-                },
-                "Test10": {
-                    "sql": @"
-INSERT INTO table
-SELECT * FROM othertable
-"
-                }
-            }
-        },
-
-        "tests": {
-            "connection": {
-                "dataSource":       "(local)\\SQLEXPRESS",
-                "initialCatalog":   "APITest"
-            },
-            "methods": {
-                "Test1": {
-                    "parameters": {
-                        "t01": { "sqlType": "bigint" },
-                        "t02": { "sqlType": "binary" },
-                        "t03": { "sqlType": "bit" },
-                        "t04": { "sqlType": "char" },
-                        "t05": { "sqlType": "date" },
-                        "t06": { "sqlType": "datetime" },
-                        "t07": { "sqlType": "datetime2" },
-                        "t08": { "sqlType": "datetimeoffset" },
-                        "t09": { "sqlType": "decimal" },
-                        "t10": { "sqlType": "float" },
-                        "t11": { "sqlType": "geography" },
-                        "t12": { "sqlType": "geometry" },
-                        "t13": { "sqlType": "hierarchyid" },
-                        "t14": { "sqlType": "image" },
-                        "t15": { "sqlType": "int" },
-                        "t16": { "sqlType": "money" },
-                        "t17": { "sqlType": "nchar" },
-                        "t18": { "sqlType": "ntext" },
-                        "t19": { "sqlType": "numeric" },
-                        "t20": { "sqlType": "nvarchar" },
-                        "t21": { "sqlType": "ntext" },
-                        "t22": { "sqlType": "real" },
-                        "t23": { "sqlType": "smalldatetime" },
-                        "t24": { "sqlType": "smallint" },
-                        "t25": { "sqlType": "smallmoney" },
-                        "t26": { "sqlType": "sql_variant" },
-                        "t27": { "sqlType": "text" },
-                        "t28": { "sqlType": "time" },
-                        "t29": { "sqlType": "timestamp" },
-                        "t30": { "sqlType": "tinyint" },
-                        "t31": { "sqlType": "uniqueidentifier" },
-                        "t32": { "sqlType": "varbinary" },
-                        "t33": { "sqlType": "varchar" },
-                        "t34": { "sqlType": "xml" }
-                    },
-// test URL: http://localhost/data/tests/Test1?t01=%00&t02=%00&t03=%00&t04=%00&t05=%00&t06=%00&t07=%00&t08=%00&t09=%00&t10=%00&t11=%00&t12=%00&t13=%00&t14=%00&t15=%00&t16=%00&t17=%00&t18=%00&t19=%00&t20=%00&t21=%00&t22=%00&t23=%00&t24=%00&t25=%00&t26=%00&t27=%00&t28=%00&t29=%00&t30=%00&t31=%00&t32=%00&t33=%00&t34=%00
-                    "query": {
-                        "from":     "Test",
-                        "select":   "*"
-                    }
-                },
-                "Test2": {
-                    "query": {
-                        "select":   "1 AS id, 'james' AS first, 'dunne' AS last, 2 AS id, '123 fake st' AS line1, 1 AS test, NULL AS stuff"
-                    },
-                    "result": {
-                        "Person": {
-                            "<exists>": "id",
-                            "FirstName": "first",
-                            "LastName": "last",
-                            "Address": {
-                                "<exists>": "id`2",
-                                "Line1": "line1"
-                            }
-                        },
-                        "Test": {
-                            "<exists>": "test",
-                            "stuff": "stuff"
-                        }
-                    }
-                },
-                "Test3": {
-                    "query": {
-                        "select":   "1 AS id, 'james' AS first, 'dunne' AS last, NULL AS id, '123 fake st' AS line1, 1 AS test, 0.45 AS stuff"
-                    },
-                    "result": {
-                        "Person": {
-                            "<exists>": "id",
-                            "FirstName": "first",
-                            "LastName": "last",
-                            "Address": {
-                                "<exists>": "id`2",
-                                "Line1": "line1"
-                            }
-                        },
-                        "Test": {
-                            "<exists>": "test",
-                            "stuff": "stuff"
-                        }
-                    }
-                }
-            }
-        }
+        @import("../../error-tests.hson"),
+        @import("../../success-tests.hson")
     }
 }
