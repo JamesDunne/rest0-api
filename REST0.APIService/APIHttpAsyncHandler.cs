@@ -114,8 +114,10 @@ namespace REST0.APIService
                     SHA1Hashed.Zero
                 );
 
-                return true;
+                return false;
             }
+
+            Debug.Assert(config != null);
 
             // Parse the config object:
             var tmp = ParseConfigData(config.Value);
@@ -770,7 +772,9 @@ namespace REST0.APIService
 
             // Prefer to fetch over HTTP:
             if (!localConfig.TryGetSingleValue("config.Url", out url))
-                return null;
+            {
+                throw new Exception("config.Url argument was not set");
+            }
 
             // Fire off a request now to our configuration server for our config data:
             // Read only raw JSON from the HTTP response, not HSON:
@@ -786,7 +790,9 @@ namespace REST0.APIService
             string path;
 
             if (!localConfig.TryGetSingleValue("config.Path", out path))
-                return null;
+            {
+                throw new Exception("config.Path argument was not set");
+            }
 
             // Load the local HSON file:
             using (var hsr = new HsonReader(path, UTF8.WithoutBOM, true, 8192))
