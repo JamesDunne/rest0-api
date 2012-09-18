@@ -131,11 +131,11 @@ property.
 
 There are several elements of a method descriptor:
 
-  * `parameters`: defines a mapping of query-string parameter names to their SQL parameter counterparts.
-  * `parameterTypes`: defines method-specific parameter types.
-  * `connection`: override the service-level DB connection.
+  * `parameters`: (optional) defines a mapping of query-string parameter names to their SQL parameter counterparts.
+  * `parameterTypes`: (optional) defines method-specific parameter types.
+  * `connection`: (optional) override the service-level DB connection.
   * `query`: defines the parts of the SQL SELECT query to be executed (preferred for regular usage).
-  * `sql`: overrides `query` to provide raw SQL text to be executed (not preferred; for exceptional cases only).
+  * `result`: (optional) defines a custom per-row object mapping
 
 Queries
 -------
@@ -144,9 +144,9 @@ The `query` property is interesting here in that is *not* one complete SELECT qu
 expect. Rather, it is an object with properties each describing the individual clauses of a single SELECT query.
 
 This query clause separation is beneficial for many reasons. Firstly, it guarantees that one cannot write a query that is
-not a SELECT query. This is very useful for ensuring that the service will only read data and never mutate data. Secondly,
-it provides a way to rearrange the clauses of a SQL query in a way that is more readable and possibly more amenable to a
-logical thought process in forming a query. Finally, individual clauses of the query, such as `orderBy` may be used to
+*not* an actual SELECT query. This is very useful for ensuring that the service will only read data and never mutate data.
+Secondly, it provides a way to rearrange the clauses of a SQL query in a way that is more readable and possibly more amenable
+to a logical thought process in forming a query. Finally, individual clauses of the query, such as `orderBy` may be used to
 drive the implementation of an automatic data paging mechanism. Having the clauses already broken out without having to
 parse the SQL makes it easy to implement such advanced features.
 
@@ -176,45 +176,71 @@ we have `"xmlns:sis": "http://example.org/sis/v1"`, the resulting `WITH XMLNAMES
     )
 ```
 
-NOTE: Developers may opt to use the `sql` property instead of the `query` property shown here. The `sql` property allows
-one to specify raw SQL query code. Use of this property should be discouraged though. The deconstructed form guarantees safety
-in that one cannot write a non-SELECT query. The `sql` property is only offered for complex SELECT query shapes that can
-otherwise not be specified in the deconstructed form.
-
-JSON results
-------------
+JSON result mapping
+-------------------
 
 All query results are serialized to an array of JSON objects. Each JSON object consitutes a single row of data where each
 column name is an object property and its value is the column's value for that row.
 
-An advanced feature called **object inflation** is available which allows a service developer to create sub-objects in the
-JSON response simply by adding specially-named columns to the query's `select` clause.
+A row may be mapped to a custom JSON object via the `"result"` property of the method descriptor.
 
-In order to take advantage of this feature, simply specify a column named `{Name` where `Name` is the name of the
-sub-object you wish to create. All columns following this column will be added to this named sub-object. If the `{Name`
-column's value is NULL, the whole sub-object is assigned a null value and the column values are ignored (since they are
-presumed to be all NULL). All named sub-objects must be closed in a following column name starting with a `}`. Multiple
-sub-objects may be nested and multiple closing `}` are allowed at the start of a column name in order to close many at
-once. After any `}` characters, an opening `{Name` is allowed again in the same column name. This is to save on column
-count.
+Each property of the result mapping may have a value that is an object or a string literal.
+
+Here are the rules of mapping:
+
+ * If the value is a string literal, then that value represents the name of the column to map to that property.
+   * Since column names do not have to be unique in a SQL query's result set, a disambiguation feature is provided to
+     select the proper column when there exist multiple columns with the same name in the result set. Add a back-quote
+     character to the end of the name followed by an integer that is the instance number of the column, e.g. "id`2" will
+     select the second occurence of the "id" column from the result set. Without this disambiguation, the default
+     instance number of 1 is assumed.
+ * If the value is an object, a sub-object is created and its properties are used for further mapping, recursively.
+   * A special (optional) property named `"<exists>"` is used to determine the nullability of the whole sub-object.
+     If this column's value is a NULL value then the entire sub-object is given a `null` value in the response and
+     all mapping is ceased for that sub-object and its children. If the column's value is not NULL then mapping resumes
+     and the column is ignored and will not be present in the output.
+   * This feature is very useful when doing LEFT JOINs in your query and you want to represent each joined table's
+     columns as independent sub-objects of the row object. You may use any of the joined-in columns as your
+     `"<exists>"` test column.
 
 Examples:
 
 ```javascript
-  "select": "1 as '{Person', 2 as first, 3 as last, null as '{Address', null as Line1, 1 as '}}{Test', 4 as stuff, null as '}'"
+  "query": {
+    // Note the duplication of "id":
+    "select": "1 as id, 'James' as first, 'Dunne' as last, null as address, 2 as id, 4 as stuff"
+  },
+  "result": {
+    "Person": {
+      "<exists>": "first",      // "Person" will be null if "first" column is NULL
+      "ID":     "id`1",         // use first instance of "id"
+      "First":  "first",
+      "Last":   "last",
+      "Address": {
+        "<exists>": "address",  // "Address" will be null if "address" column is NULL
+        "Line1":    "address"
+      }
+    },
+    "Test": {
+      "ID":     "id`2",         // use second instance of "id"
+      "Stuff":  "stuff"
+    }
+  }
 ```
 
-This select list will generate the following JSON response:
+This mapping will generate the following JSON response:
 
 ```javascript
   {
     "Person": {
-      "first": 2,
-      "last": 3,
+      "ID": 1,
+      "First": "James",
+      "Last": "Dunne",
       "Address": null
     },
     "Test": {
-      "stuff": 4
+      "ID": 2,
+      "Stuff": 4
     }
   }
 ```
