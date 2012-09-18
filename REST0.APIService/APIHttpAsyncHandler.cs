@@ -1799,6 +1799,7 @@ namespace REST0.APIService
                     {
                         service = method.Service.Name,
                         method = method.Name,
+                        deprecated = method.DeprecatedMessage,
                         openMsec = Math.Round(swOpenTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
                         execMsec = Math.Round(swExecTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
                         readMsec = Math.Round(swReadTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2)
