@@ -86,6 +86,28 @@
                     "stuff": "stuff"
                 }
             }
+        },
+        "Test4": {
+            "query": {
+                // Note the duplication of "id":
+                "select": "1 as id, 'James' as first, 'Dunne' as last, null as address, 2 as id, 4 as stuff"
+            },
+            "result": {
+                "Person": {
+                    "<exists>": "first",      // "Person" will be null if "first" column is NULL
+                    "ID":     "id`1",         // use first instance of "id"
+                    "First":  "first",
+                    "Last":   "last",
+                    "Address": {
+                        "<exists>": "address",  // "Address" will be null if "address" column is NULL
+                        "Line1":    "address"
+                    }
+                },
+                "Test": {
+                    "ID":     "id`2",         // use second instance of "id"
+                    "Stuff":  "stuff"
+                }
+            }
         }
     }
 }
