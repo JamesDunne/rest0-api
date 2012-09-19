@@ -1469,7 +1469,7 @@ namespace REST0.APIService
                 // TODO: some descriptive information here.
                 return new JsonResult(new
                 {
-                    hash = main.HashHexString,
+                    configHash = main.HashHexString,
                     links = new RestfulLink[]
                     {
                         RestfulLink.Create("meta", "/errors"),
@@ -1579,7 +1579,7 @@ namespace REST0.APIService
             // Report all service descriptors:
             return new JsonResult(new
             {
-                hash = main.HashHexString,
+                configHash = main.HashHexString,
                 errors = main.Value.Errors,
                 serviceLinks = main.Value.Services.ToDictionary(
                     s => s.Key,
@@ -1593,7 +1593,7 @@ namespace REST0.APIService
         {
             return new JsonResult(new
             {
-                hash = main.HashHexString,
+                configHash = main.HashHexString,
                 service = new ServiceSerialized(svc)
             });
         }
@@ -1602,7 +1602,7 @@ namespace REST0.APIService
         {
             return new JsonResult(new
             {
-                hash = main.HashHexString,
+                configHash = main.HashHexString,
                 serviceLink = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
                 selfLink = RestfulLink.Create("meta", "/meta/{0}/{1}".F(method.Service.Name, method.Name)),
                 dataLink = RestfulLink.Create("data", "/data/{0}/{1}".F(method.Service.Name, method.Name)),
@@ -1614,7 +1614,7 @@ namespace REST0.APIService
         {
             return new JsonResult(new
             {
-                hash = main.HashHexString,
+                configHash = main.HashHexString,
                 service = desc.Name,
                 method = method.Name,
                 errors = method.Errors
@@ -1625,7 +1625,7 @@ namespace REST0.APIService
         {
             return new JsonResult(new
             {
-                hash = main.HashHexString,
+                configHash = main.HashHexString,
                 service = desc.Name,
                 errors = desc.Errors,
                 methods = desc.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
@@ -1643,7 +1643,7 @@ namespace REST0.APIService
         {
             return new JsonResult(new
             {
-                hash = main.HashHexString,
+                configHash = main.HashHexString,
                 errors = main.Value.Errors,
                 services =
                     main.Value.Services.Where(s => s.Value.Errors.Any() || s.Value.Methods.Any(m => m.Value.Errors.Any())).ToDictionary(
@@ -1667,7 +1667,17 @@ namespace REST0.APIService
 
         async Task<IHttpResponseAction> dataMethod(SHA1Hashed<ServiceCollection> main, Method method, System.Collections.Specialized.NameValueCollection queryString)
         {
-            // TODO: Is the method deprecated? What do we do then?
+            // Check for descriptor errors:
+            if (method.Errors.Count > 0)
+            {
+                return new JsonResult(500, "Bad method descriptor", new
+                {
+                    configHash = main.HashHexString,
+                    service = method.Service.Name,
+                    method = method.Name,
+                    errors = method.Errors
+                });
+            }
 
             // Check required parameters:
             if (method.Parameters != null)
@@ -1694,17 +1704,6 @@ namespace REST0.APIService
                     });
 
                 missingParams = null;
-            }
-
-            // Execute the query:
-            if (method.Errors.Count > 0)
-            {
-                return new JsonResult(500, "Bad method descriptor", new
-                {
-                    service = method.Service.Name,
-                    method = method.Name,
-                    errors = method.Errors
-                });
             }
 
             // Open a connection and execute the command:
@@ -1814,6 +1813,7 @@ namespace REST0.APIService
                     swReadTime.Stop();
                     var meta = new
                     {
+                        configHash = main.HashHexString,
                         service = method.Service.Name,
                         method = method.Name,
                         deprecated = method.DeprecatedMessage,
