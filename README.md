@@ -35,19 +35,47 @@ Let's take a look at a very simple example data request to get a feel for what t
 
 Let's break down this example URL:
 
- * `/data` means this is a data request; one may also do `/meta` requests to get useful metadata.
+ * `/data` means this is a data request.
  * `/sis;core` indicates the service's full name. Service name components are separated with semicolons to allow
    for namespacing and versioning. Aliases may also be set up to allow bleeding-edge clients to always work
    against the latest version of a service. In our example, `"sis;core"` is an alias for `"sis;core;v5"`, the
    latest version defined.
  * `/GetStudent` is the method name selected from the service to execute
- * `?id=1` is a query-string parameter which is bound to a SQL parameter `@id`
+ * `?id=1` is a query-string parameter
 
-As it turns out, the path part of a request URL is always made of 3 parts:
+Requests
+--------
 
- 1. request type (`meta` or `data`)
+The absolute path of a request URL is always made of at most 3 parts:
+
+ 1. request type (`meta`, `errors`, or `data`)
  2. service name
  3. method name
+
+There are several kinds of request types available to make:
+
+  * `data`: The most common kind of request which executes methods and gets data back from a database.
+    * All 3 request parts (type, service, method) are required for a data request, otherwise a 302 redirect is
+      issued to the corresponding `meta` request URL.
+    * Any required parameters missing from the query-string parameter will cause a 400 Bad Request response with
+      a list of all the missing parameters that are required.
+    * To set a required parameter's value to NULL, use the special value `%00` in the query-string (see the
+      `parameters` section below for more details).
+  * `meta`: A request which yields detailed metadata for services and methods.
+    * This request type can be made against the global level, the service level, or the method level.
+    * A meta request against the global level will yield a list of named service links, including aliases.
+    * A meta request against the service level will yield the service's details and a list of named method links.
+    * A meta request against the method level will yield detailed information about the method, its parameters, and
+      its query.
+  * `errors`: A request which yields all error messages encountered while processing the service declaration file.
+    * This is mostly to aid the service developer in diagnosing common failures.
+    * A well-defined service descriptor file should produce no error messages.
+    * It is strongly encouraged to resolve all error messages before publishing a service for consumers to use.
+    * An errors request against the global level will yield a recursive list of all errors encountered across all
+      services and their methods.
+    * An errors request against the service level will yield a recursive list of all errors encountered over the
+      service's methods.
+    * An errors request against the method level will yield a list of all errors encountered for that method.
 
 Services
 --------
@@ -134,7 +162,8 @@ There are several elements of a method descriptor:
   * `parameters`: (optional) defines a mapping of query-string parameter names to their SQL parameter counterparts.
   * `parameterTypes`: (optional) defines method-specific parameter types.
   * `connection`: (optional) override the service-level DB connection.
-  * `query`: defines the parts of the SQL SELECT query to be executed (preferred for regular usage).
+  * `deprecated`: (optional) a message to display to consumers of the method indicating its deprecation.
+  * `query`: defines the parts of the SQL SELECT query to be executed.
   * `result`: (optional) defines a custom per-row object mapping
 
 Queries
@@ -152,9 +181,7 @@ parse the SQL makes it easy to implement such advanced features.
 
 The final query is constructed as follows from the `query` object's properties:
 
-    [WITH XMLNAMESPACES (
-        '`xmlns:???`' AS `???`
-    )]
+    [WITH XMLNAMESPACES (...)]
     [WITH `withCTEidentifier` AS (`withCTEexpression`)]
     SELECT `select`
     [FROM `from`]
@@ -166,9 +193,10 @@ The final query is constructed as follows from the `query` object's properties:
 Hopefully this break-down makes it clear as to where each property of the `query` object goes in the constructed SELECT query.
 The only property absolutely required of the `query` object is the `select` property.
 
-`WITH XMLNAMESPACES` is added to support SQL-XML queries. Adding a property of the form `xmlns:???` where ??? is an
-XML namespace prefix will assign that namespace prefix to the property's value as the namespace URI. For example, if
-we have `"xmlns:sis": "http://example.org/sis/v1"`, the resulting `WITH XMLNAMESPACES` clause will look like this:
+`WITH XMLNAMESPACES` is added to support SQL-XML queries. Adding a sub-object property named `xmlns` with key/value
+pairs representing XML namespace prefix assignments to XML namespace URIs will build out this query clause. For
+example, if we have `"xmlns": {"sis": "http://example.org/sis/v1"}` then the resulting `WITH XMLNAMESPACES` clause will
+be this:
 
 ```sql
     WITH XMLNAMESPACES (
@@ -176,13 +204,18 @@ we have `"xmlns:sis": "http://example.org/sis/v1"`, the resulting `WITH XMLNAMES
     )
 ```
 
+*NOTE:* the asterisk (`*`) shortcut is disallowed in `select` clauses because it obscures the actual column list being
+selected and may possibly introduce inconsistencies in versioning queries.
+
 JSON result mapping
 -------------------
 
-All query results are serialized to an array of JSON objects. Each JSON object consitutes a single row of data where each
-column name is an object property and its value is the column's value for that row.
+All query results are serialized to an array of JSON objects. Each JSON object consitutes a single row of data. By
+default, a simple column-to-property mapping is generated. The order of properties serialized is the same as the order
+of columns retrieved. In this default mapping scheme, duplicate column names are ignored from the result set and only
+the first instance of a duplicately named column is used in the output mapping.
 
-A row may be mapped to a custom JSON object via the `"result"` property of the method descriptor.
+A custom mapping may be supplied via the `"result"` property of the method descriptor.
 
 Each property of the result mapping may have a value that is an object or a string literal.
 
@@ -250,8 +283,6 @@ Parameters
 
 Parameters are inputs to methods which can be passed via the query-string all the way down to the SQL query.
 
-Each parameter must have a query-string name, a SQL name, and a type.
-
 Parameters are defined in a `parameters` section as part of a method descriptor.
 
 Let's take a look at an example `parameters` section:
@@ -265,14 +296,34 @@ Let's take a look at an example `parameters` section:
   }
 ```
 
-Each key in the `parameters` section is the parameter name to be used in the request query-string. The parameter descriptor
-describes what that parameter's name is in the SQL query and what its type is.
+Each key in the `parameters` section is the parameter name to be used in the request query-string and its value is that
+parameter's *parameter descriptor*.
 
-Notice that we're missing a definition for the `StudentID` parameter type here. Let's take care of that by introducing a
-new section, `parameterTypes`.
+Properties of the parameter descriptor:
 
-Parameter types are described by `parameterTypes` sections. These sections may appear at the global level, the service level,
-or the method level.
+  * `sqlName`: (required) the SQL parameter name to create for usage in the query
+  * `type`: a named parameter type from a `parameterTypes` collection (mutually exclusive to `sqlType`)
+  * `sqlType`: an anonymous SQL parameter type (e.g. `nvarchar(20)`) (mutually exclusive to `type`)
+  * `optional`: a boolean value which represents the optionality of the parameter (default is false)
+  * `default`: assign an explicit default value for the parameter (default is NULL)
+
+In order to execute a method with parameters, simply pass them by name as query-string parameters, like so:
+
+`http://localhost/data/service/method?param1=value1&param2=value2&param3=%00`
+
+Query-string Parameter Serialization:
+
+The special syntax `%00` is used to denote an explicit NULL value for a parameter. Any binary data must be specified
+in a BASE-64 encoded string.
+
+Notice that we're missing a definition for the `StudentID` parameter in the previous example. Let's take care of that
+by introducing a new section, `parameterTypes`.
+
+Parameter Types
+---------------
+
+Parameter types are described by `parameterTypes` sections. These sections may appear at the global level, the service
+level, or the method level.
 
 Let's take a look at an example `parameterTypes` section:
 
