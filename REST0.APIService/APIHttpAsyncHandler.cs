@@ -469,6 +469,7 @@ namespace REST0.APIService
 
                 // Parse the definition:
 
+                method.Description = getString(joMethod.Property("description")).Interpolate(tokenLookup);
                 method.DeprecatedMessage = getString(joMethod.Property("deprecated")).Interpolate(tokenLookup);
 
                 // Parse connection:
@@ -539,11 +540,18 @@ namespace REST0.APIService
             method.Parameters = new Dictionary<string, Parameter>(joParameters.Count, StringComparer.OrdinalIgnoreCase);
             foreach (var jpParam in joParameters.Properties())
             {
+                if (jpParam.Value.Type != JTokenType.Object)
+                {
+                    method.Errors.Add("Parameter property '{0}' is expected to be of type object".F(jpParam.Name));
+                    continue;
+                }
+
                 var joParam = (JObject)jpParam.Value;
                 var sqlName = getString(joParam.Property("sqlName")).Interpolate(tokenLookup);
                 var sqlType = getString(joParam.Property("sqlType")).Interpolate(tokenLookup);
                 var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
                 var isOptional = getBool(joParam.Property("optional")) ?? false;
+                var desc = getString(joParam.Property("description"));
                 object defaultValue = DBNull.Value;
 
                 // Assign a default `sqlName` if null:
@@ -560,6 +568,7 @@ namespace REST0.APIService
                 {
                     Name = jpParam.Name,
                     SqlName = sqlName,
+                    Description = desc,
                     IsOptional = isOptional
                 };
 
@@ -864,13 +873,26 @@ namespace REST0.APIService
                 Debug.Assert(type[type.Length - 1] == ')');
 
                 int comma = type.LastIndexOf(',');
+
+                string strlength;
+
                 if (comma == -1)
+                    strlength = type.Substring(idx + 1, type.Length - idx - 2).Trim();
+                else
+                    strlength = type.Substring(idx + 1, comma - idx - 1).Trim();
+
+                if (strlength.Equals("max", StringComparison.OrdinalIgnoreCase))
                 {
-                    length = Int32.Parse(type.Substring(idx + 1, type.Length - idx - 2));
+                    // TODO: ?
+                    length = -1;
                 }
                 else
                 {
-                    length = Int32.Parse(type.Substring(idx + 1, comma - idx - 1));
+                    length = Int32.Parse(strlength);
+                }
+
+                if (comma != -1)
+                {
                     scale = Int32.Parse(type.Substring(comma + 1, type.Length - comma - 2));
                 }
 
@@ -898,8 +920,15 @@ namespace REST0.APIService
                     continue;
                 }
 
-                var jpType = ((JObject)jpParam.Value).Property("type");
+                if (jpParam.Value.Type != JTokenType.Object)
+                {
+                    errors.Add("ParameterType property '{0}' is expected to be of type object".F(jpParam.Name));
+                    continue;
+                }
 
+                var joParam = ((JObject)jpParam.Value);
+
+                var jpType = joParam.Property("type");
                 var type = interpolate(getString(jpType));
                 int? length;
                 int? scale;
@@ -912,9 +941,13 @@ namespace REST0.APIService
                     continue;
                 }
 
+                var jpDesc = joParam.Property("description");
+                var desc = interpolate(getString(jpDesc));
+
                 parameterTypes[jpParam.Name] = new ParameterType()
                 {
                     Name = jpParam.Name,
+                    Description = desc,
                     TypeBase = typeBase,
                     SqlDbType = sqlType.Value,
                     Length = length,
@@ -1919,9 +1952,13 @@ namespace REST0.APIService
                         service = method.Service.Name,
                         method = method.Name,
                         deprecated = method.DeprecatedMessage,
-                        openMsec = Math.Round(swOpenTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
-                        execMsec = Math.Round(swExecTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
-                        readMsec = Math.Round(swReadTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2)
+                        timings = new
+                        {
+                            open = Math.Round(swOpenTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
+                            exec = Math.Round(swExecTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
+                            read = Math.Round(swReadTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
+                            total = Math.Round((swOpenTime.ElapsedTicks + swExecTime.ElapsedTicks + swReadTime.ElapsedTicks) * 1000m / (decimal)Stopwatch.Frequency, 2),
+                        }
                     };
                     return new JsonResult(result, meta);
                 }

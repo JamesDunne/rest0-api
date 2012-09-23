@@ -108,6 +108,15 @@
                     "Stuff":  "stuff"
                 }
             }
+        },
+        "TestXML": {
+            "query": {
+                "xmlns": {
+                    "sis":  "http://sis.example.org/v1"
+                },
+                "from":     "test",
+                "select":   "test34.query('sis:*') as test34sis",
+            }
         }
     }
 }

@@ -21,6 +21,9 @@ namespace REST0.APIService.Descriptors
         [JsonProperty("scale", NullValueHandling = NullValueHandling.Ignore)]
         public int? Scale { get; set; }
 
+        [JsonProperty("description", NullValueHandling = NullValueHandling.Ignore)]
+        public string Description { get; set; }
+
         [JsonIgnore]
         public string FullType
         {

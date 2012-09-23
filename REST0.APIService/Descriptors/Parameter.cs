@@ -10,6 +10,7 @@ namespace REST0.APIService.Descriptors
     {
         public string Name { get; set; }
         public string SqlName { get; set; }
+        public string Description { get; set; }
         public bool IsOptional { get; set; }
         // `DBNull.Value` or a `System.Data.SqlTypes` object representing the default value.
         public object DefaultValue { get; set; }
@@ -47,5 +48,8 @@ namespace REST0.APIService.Descriptors
 
         [JsonProperty("type", NullValueHandling = NullValueHandling.Ignore)]
         public string Type { get { return desc.Type != null ? desc.Type.Name : null; } }
+
+        [JsonProperty("description", NullValueHandling = NullValueHandling.Ignore)]
+        public string Description { get { return desc.Description; } }
     }
 }

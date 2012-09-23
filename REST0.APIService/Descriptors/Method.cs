@@ -10,6 +10,7 @@ namespace REST0.APIService.Descriptors
     {
         public Service Service { get; set; }
         public string Name { get; set; }
+        public string Description { get; set; }
         public string DeprecatedMessage { get; set; }
         public IDictionary<string, ParameterType> ParameterTypes { get; set; }
         public IDictionary<string, Parameter> Parameters { get; set; }
@@ -51,6 +52,9 @@ namespace REST0.APIService.Descriptors
                 return desc.Name;
             }
         }
+
+        [JsonProperty("description", NullValueHandling = NullValueHandling.Ignore)]
+        public string Description { get { return desc.Description; } }
 
         [JsonProperty("deprecated", NullValueHandling = NullValueHandling.Ignore)]
         public string DeprecatedMessage { get { return desc.DeprecatedMessage; } }
