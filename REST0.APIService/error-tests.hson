@@ -5,38 +5,42 @@
     "methods": {
         "Test1": {
             "parameters": {
+                // Bad type name:
                 "id": { "sqlName": "@id", "type": "nonexistent" }
             }
+            // Missing `query`
         },
         "Test2": {
             "parameters": {
                 "id": { "sqlName": "@id", "sqlType": "int" }
             }
+            // Missing `query`
         },
         "Test3": {
+            // Missing required `select`
             "query": {}
         },
         "Test4": {
             "query": {
-                "select": "* from test"
+                "select":   "a from test"
             }
         },
         "Test5": {
             "query": {
-                "select":   "*",
+                "select":   "a",
                 "from":     "test where 1 = 1"
             }
         },
         "Test6": {
             "query": {
-                "select":   "*",
+                "select":   "a",
                 "from":     "test",
                 "where":    "1 = 1 group by 1"
             }
         },
         "Test7": {
             "query": {
-                "select":   "*",
+                "select":   "a",
                 "from":     "test",
                 "where":    "1 = 1",
                 "groupBy":  "1 having count(1) > 1"
@@ -44,7 +48,7 @@
         },
         "Test8": {
             "query": {
-                "select":   "*",
+                "select":   "a",
                 "from":     "test",
                 "where":    "1 = 1",
                 "groupBy":  "1",
@@ -53,12 +57,19 @@
         },
         "Test9": {
             "query": {
-                "select":   "*",
+                "select":   "a",
                 "from":     "test",
                 "where":    "1 = 1",
                 "groupBy":  "1",
                 "having":   "count(1) > 1",
                 "orderBy":  "1 for xml auto"
+            }
+        },
+        "Test10": {
+            "query": {
+                // Astersisks are not allowed:
+                "select":   "*",
+                "from":     "test"
             }
         }
     }

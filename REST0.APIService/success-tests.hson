@@ -1,4 +1,4 @@
-"tests": {
+"success-tests": {
     "connection": {
         "dataSource":       "(local)\\SQLEXPRESS",
         "initialCatalog":   "APITest"
@@ -44,7 +44,7 @@
 // test URL: http://localhost/data/tests/Test1?t01=%00&t02=%00&t03=%00&t04=%00&t05=%00&t06=%00&t07=%00&t08=%00&t09=%00&t10=%00&t11=%00&t12=%00&t13=%00&t14=%00&t15=%00&t16=%00&t17=%00&t18=%00&t19=%00&t20=%00&t21=%00&t22=%00&t23=%00&t24=%00&t25=%00&t26=%00&t27=%00&t28=%00&t29=%00&t30=%00&t31=%00&t32=%00&t33=%00&t34=%00
             "query": {
                 "from":     "Test",
-                "select":   "*"
+                "select":   "Test1"
             }
         },
         "Test2": {

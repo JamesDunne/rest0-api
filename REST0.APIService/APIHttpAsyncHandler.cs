@@ -234,7 +234,17 @@ namespace REST0.APIService
             {
                 // Extract the key/value pairs onto a copy of the token dictionary:
                 foreach (var prop in ((JObject)jpTokens.Value).Properties())
+                {
+                    // Newtonsoft.Json already guarantees that property names must be unique; it will throw a JsonReaderException in that case.
+#if false
+                    if (rootTokens.ContainsKey(prop.Name))
+                    {
+                        coll.Errors.Add("A token named '{0}' already exists in the '$' collection; cannot add a duplicate".F(prop.Name));
+                        continue;
+                    }
+#endif
                     rootTokens[prop.Name] = getString(prop);
+                }
             }
 
             // Parse root parameter types:
@@ -243,7 +253,7 @@ namespace REST0.APIService
             if (jpParameterTypes != null)
             {
                 var errors = new List<string>(5);
-                parseParameterTypes((JObject)jpParameterTypes.Value, errors, rootParameterTypes, (s) => s);
+                parseParameterTypes(jpParameterTypes, errors, rootParameterTypes, (s) => s);
                 if (errors.Count > 0)
                 {
                     // Add errors encountered and keep going:
@@ -255,7 +265,7 @@ namespace REST0.APIService
             JToken jtServices;
             if (!joConfig.TryGetValue("services", out jtServices))
             {
-                coll.Errors.Add("No 'services' section defined");
+                coll.Errors.Add("A 'services' section is required");
                 return coll;
             }
             var joServices = (JObject)jtServices;
@@ -283,7 +293,7 @@ namespace REST0.APIService
                     string baseName = getString(jpBase);
                     if (!coll.Services.TryGetValue(baseName, out baseService))
                     {
-                        coll.Errors.Add("Unknown base service name '{0}' for service '{1}'".F(baseName, jpService.Name));
+                        coll.Errors.Add("Unknown base service name '{0}' for service '{1}'; services must declared in document order".F(baseName, jpService.Name));
                         continue;
                     }
 
@@ -335,8 +345,7 @@ namespace REST0.APIService
                 var jpConnection = joService.Property("connection");
                 if (jpConnection != null)
                 {
-                    var joConnection = (JObject)jpConnection.Value;
-                    connectionString = parseConnection(joConnection, svcErrors, (s) => s.Interpolate(tokenLookup));
+                    connectionString = parseConnection(jpConnection, svcErrors, (s) => s.Interpolate(tokenLookup));
                 }
 
                 // Parse the parameter types:
@@ -351,7 +360,7 @@ namespace REST0.APIService
                     }
                     else
                     {
-                        parseParameterTypes((JObject)jpParameterTypes.Value, svcErrors, parameterTypes, (s) => s.Interpolate(tokenLookup));
+                        parseParameterTypes(jpParameterTypes, svcErrors, parameterTypes, (s) => s.Interpolate(tokenLookup));
                     }
                 }
 
@@ -371,271 +380,7 @@ namespace REST0.APIService
                 var jpMethods = joService.Property("methods");
                 if (jpMethods != null)
                 {
-                    var joMethods = (JObject)jpMethods.Value;
-
-                    // Parse each method:
-                    foreach (var jpMethod in joMethods.Properties())
-                    {
-                        // Is the method set to null?
-                        if (jpMethod.Value.Type == JTokenType.Null)
-                        {
-                            // Remove it:
-                            methods.Remove(jpMethod.Name);
-                            continue;
-                        }
-
-                        var joMethod = ((JObject)jpMethod.Value);
-
-                        // Create a clone of the inherited descriptor or a new descriptor:
-                        Method method;
-                        if (methods.TryGetValue(jpMethod.Name, out method))
-                            method = method.Clone();
-                        else
-                        {
-                            method = new Method()
-                            {
-                                Name = jpMethod.Name,
-                                ParameterTypes = new Dictionary<string, ParameterType>(parameterTypes, StringComparer.OrdinalIgnoreCase),
-                                ConnectionString = connectionString,
-                                Errors = new List<string>(5)
-                            };
-                        }
-                        methods[jpMethod.Name] = method;
-                        method.Service = svc;
-
-                        Debug.Assert(method.Errors != null);
-
-                        // Parse the definition:
-
-                        method.DeprecatedMessage = getString(joMethod.Property("deprecated")).Interpolate(tokenLookup);
-
-                        // Parse connection:
-                        jpConnection = joMethod.Property("connection");
-                        if (jpConnection != null)
-                        {
-                            var joConnection = (JObject)jpConnection.Value;
-                            connectionString = parseConnection(joConnection, method.Errors, (s) => s.Interpolate(tokenLookup));
-                        }
-
-                        // Parse parameter types:
-                        jpParameterTypes = joMethod.Property("parameterTypes");
-                        if (jpParameterTypes != null)
-                        {
-                            // Assigning a `null`?
-                            if (jpParameterTypes.Value.Type == JTokenType.Null)
-                            {
-                                // Clear out all inherited parameter types:
-                                method.ParameterTypes.Clear();
-                            }
-                            else
-                            {
-                                parseParameterTypes((JObject)jpParameterTypes.Value, method.Errors, method.ParameterTypes, (s) => s.Interpolate(tokenLookup));
-                            }
-                        }
-
-                        // Parse the parameters:
-                        var jpParameters = joMethod.Property("parameters");
-                        if (jpParameters != null)
-                        {
-                            var joParameters = (JObject)jpParameters.Value;
-
-                            // Keep track of unique SQL parameter names:
-                            var sqlNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                            // Parse parameter properties:
-                            method.Parameters = new Dictionary<string, Parameter>(joParameters.Count, StringComparer.OrdinalIgnoreCase);
-                            foreach (var jpParam in joParameters.Properties())
-                            {
-                                var joParam = (JObject)jpParam.Value;
-                                var sqlName = getString(joParam.Property("sqlName")).Interpolate(tokenLookup);
-                                var sqlType = getString(joParam.Property("sqlType")).Interpolate(tokenLookup);
-                                var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
-                                var isOptional = getBool(joParam.Property("optional")) ?? false;
-                                object defaultValue = DBNull.Value;
-
-                                // Assign a default `sqlName` if null:
-                                if (sqlName == null) sqlName = "@" + jpParam.Name;
-                                // TODO: validate sqlName is valid SQL parameter identifier!
-
-                                if (sqlNames.Contains(sqlName))
-                                {
-                                    method.Errors.Add("Duplicate SQL parameter name (`sqlName`): '{0}'".F(sqlName));
-                                    continue;
-                                }
-
-                                var param = new Parameter()
-                                {
-                                    Name = jpParam.Name,
-                                    SqlName = sqlName,
-                                    IsOptional = isOptional
-                                };
-
-                                if (sqlType != null)
-                                {
-                                    int? length;
-                                    int? scale;
-                                    var typeBase = parseSqlType(sqlType, out length, out scale);
-                                    var sqlDbType = getSqlType(typeBase);
-                                    if (!sqlDbType.HasValue)
-                                    {
-                                        method.Errors.Add("Unknown SQL type name '{0}' for parameter '{1}'".F(typeBase, jpParam.Name));
-                                        continue;
-                                    }
-                                    else
-                                    {
-                                        param.SqlType = new ParameterType()
-                                        {
-                                            TypeBase = typeBase,
-                                            SqlDbType = sqlDbType.Value,
-                                            Length = length,
-                                            Scale = scale
-                                        };
-                                    }
-                                }
-                                else
-                                {
-                                    ParameterType paramType;
-                                    if (!parameterTypes.TryGetValue(typeName, out paramType))
-                                    {
-                                        method.Errors.Add("Could not find parameter type '{0}' for parameter '{1}'".F(typeName, jpParam.Name));
-                                        continue;
-                                    }
-                                    param.Type = paramType;
-                                }
-
-                                if (isOptional)
-                                {
-                                    var jpDefault = joParam.Property("default");
-                                    if (jpDefault != null)
-                                        // Parse the default value into a SqlValue:
-                                        param.DefaultValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
-                                    else
-                                        param.DefaultValue = DBNull.Value;
-                                }
-
-                                method.Parameters.Add(jpParam.Name, param);
-                            }
-                        }
-
-                        // Parse query:
-                        var jpQuery = joMethod.Property("query");
-                        if (jpQuery != null)
-                        {
-                            var joQuery = (JObject)jpQuery.Value;
-                            method.Query = new Query();
-
-                            // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
-
-                            // 'select' is required:
-                            method.Query.Select = getString(joQuery.Property("select")).Interpolate(tokenLookup);
-                            if (String.IsNullOrEmpty(method.Query.Select))
-                            {
-                                method.Errors.Add("A `select` clause is required");
-                            }
-
-                            // The rest are optional:
-                            method.Query.From = getString(joQuery.Property("from")).Interpolate(tokenLookup);
-                            method.Query.Where = getString(joQuery.Property("where")).Interpolate(tokenLookup);
-                            method.Query.GroupBy = getString(joQuery.Property("groupBy")).Interpolate(tokenLookup);
-                            method.Query.Having = getString(joQuery.Property("having")).Interpolate(tokenLookup);
-                            method.Query.OrderBy = getString(joQuery.Property("orderBy")).Interpolate(tokenLookup);
-                            method.Query.WithCTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
-                            method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
-
-                            // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
-                            var xmlNamespaces = new Dictionary<string, string>(StringComparer.Ordinal);
-                            foreach (var jpXmlns in joQuery.Properties())
-                            {
-                                if (!jpXmlns.Name.StartsWith("xmlns:")) continue;
-                                var prefix = jpXmlns.Name.Substring(6);
-                                var ns = getString(jpXmlns).Interpolate(tokenLookup);
-                                xmlNamespaces.Add(prefix, ns);
-                            }
-                            if (xmlNamespaces.Count > 0) method.Query.XMLNamespaces = xmlNamespaces;
-
-                            // Strip out all SQL comments:
-                            string withCTEidentifier = stripSQLComments(method.Query.WithCTEidentifier);
-                            string withCTEexpression = stripSQLComments(method.Query.WithCTEexpression);
-                            string select = stripSQLComments(method.Query.Select);
-                            string from = stripSQLComments(method.Query.From);
-                            string where = stripSQLComments(method.Query.Where);
-                            string groupBy = stripSQLComments(method.Query.GroupBy);
-                            string having = stripSQLComments(method.Query.Having);
-                            string orderBy = stripSQLComments(method.Query.OrderBy);
-
-                            // Allocate a StringBuilder with enough space to construct the query:
-                            StringBuilder qb = new StringBuilder(
-                                (withCTEidentifier ?? String.Empty).Length + (withCTEexpression ?? String.Empty).Length + ";WITH  AS ()\r\n".Length
-                              + (select ?? String.Empty).Length + "SELECT ".Length
-                              + (from ?? String.Empty).Length + "\r\nFROM ".Length
-                              + (where ?? String.Empty).Length + "\r\nWHERE ".Length
-                              + (groupBy ?? String.Empty).Length + "\r\nGROUP BY ".Length
-                              + (having ?? String.Empty).Length + "\r\nHAVING ".Length
-                              + (orderBy ?? String.Empty).Length + "\r\nORDER BY ".Length
-                            );
-
-                            // This is a very conservative approach and will lead to false-positives for things like EXISTS() and sub-queries:
-                            if (containsSQLkeywords(select, "from", "into", "where", "group", "having", "order", "for"))
-                                method.Errors.Add("SELECT clause cannot contain FROM, INTO, WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
-                            if (containsSQLkeywords(from, "where", "group", "having", "order", "for"))
-                                method.Errors.Add("FROM clause cannot contain WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
-                            if (containsSQLkeywords(where, "group", "having", "order", "for"))
-                                method.Errors.Add("WHERE clause cannot contain GROUP BY, HAVING, ORDER BY, or FOR");
-                            if (containsSQLkeywords(groupBy, "having", "order", "for"))
-                                method.Errors.Add("GROUP BY clause cannot contain HAVING, ORDER BY, or FOR");
-                            if (containsSQLkeywords(having, "order", "for"))
-                                method.Errors.Add("HAVING clause cannot contain ORDER BY or FOR");
-                            if (containsSQLkeywords(orderBy, "for"))
-                                method.Errors.Add("ORDER BY clause cannot contain FOR");
-
-                            if (method.Errors.Count == 0)
-                            {
-                                // Construct the query:
-                                bool didSemi = false;
-                                if (xmlNamespaces.Count > 0)
-                                {
-                                    didSemi = true;
-                                    qb.AppendLine(";WITH XMLNAMESPACES (");
-                                    using (var en = xmlNamespaces.GetEnumerator())
-                                        for (int i = 0; en.MoveNext(); ++i)
-                                        {
-                                            var xmlns = en.Current;
-                                            qb.AppendFormat("  '{0}' AS {1}", xmlns.Value.Replace("\'", "\'\'"), xmlns.Key);
-                                            if (i < xmlNamespaces.Count - 1) qb.Append(",\r\n");
-                                            else qb.Append("\r\n");
-                                        }
-                                    qb.Append(")\r\n");
-                                }
-                                if (!String.IsNullOrEmpty(withCTEidentifier) && !String.IsNullOrEmpty(withCTEexpression))
-                                {
-                                    if (!didSemi) qb.Append(';');
-                                    qb.AppendFormat("WITH {0} AS (\r\n{1}\r\n)\r\n", withCTEidentifier, withCTEexpression);
-                                }
-                                qb.AppendFormat("SELECT {0}", select);
-                                if (!String.IsNullOrEmpty(from)) qb.AppendFormat("\r\nFROM {0}", from);
-                                if (!String.IsNullOrEmpty(where)) qb.AppendFormat("\r\nWHERE {0}", where);
-                                if (!String.IsNullOrEmpty(groupBy)) qb.AppendFormat("\r\nGROUP BY {0}", groupBy);
-                                if (!String.IsNullOrEmpty(having)) qb.AppendFormat("\r\nHAVING {0}", having);
-                                if (!String.IsNullOrEmpty(orderBy)) qb.AppendFormat("\r\nORDER BY {0}", orderBy);
-
-                                // Assign the constructed query:
-                                method.Query.SQL = qb.ToString();
-                            }
-                        }
-
-                        if (method.Query == null)
-                        {
-                            method.Errors.Add("No query specified");
-                        }
-
-                        // Parse result mapping:
-                        var jpMapping = joMethod.Property("result");
-                        if (jpMapping != null)
-                        {
-                            var joMapping = (JObject)jpMapping.Value;
-                            method.Mapping = parseMapping(joMapping, method.Errors);
-                        }
-                    } // foreach (var method)
+                    parseMethods(jpMethods, svc, connectionString, parameterTypes, methods, tokenLookup);
                 }
 
                 // Add the parsed service descriptor:
@@ -652,17 +397,349 @@ namespace REST0.APIService
                 {
                     // Add the existing Service reference to the new name:
                     string svcName = getString(jpAlias);
+
+                    // Must find the existing service by its name first:
                     Service svcref;
                     if (!coll.Services.TryGetValue(svcName, out svcref))
                     {
                         coll.Errors.Add("Unknown service name '{0}' for alias '{1}'".F(svcName, jpAlias.Name));
                         continue;
                     }
+
+                    // Can't add an alias name that already exists:
+                    if (coll.Services.ContainsKey(jpAlias.Name))
+                    {
+                        coll.Errors.Add("Cannot add alias name '{0}' because that name is already in use".F(jpAlias.Name));
+                        continue;
+                    }
+
                     coll.Services.Add(jpAlias.Name, svcref);
                 }
             }
 
             return coll;
+        }
+
+        private void parseMethods(JProperty jpMethods, Service svc, string connectionString, IDictionary<string, ParameterType> parameterTypes, IDictionary<string, Method> methods, Func<string, string> tokenLookup)
+        {
+            if (jpMethods.Value.Type != JTokenType.Object)
+            {
+                svc.Errors.Add("The `methods` property is expected to be of type object");
+                return;
+            }
+
+            var joMethods = (JObject)jpMethods.Value;
+
+            // Parse each method:
+            foreach (var jpMethod in joMethods.Properties())
+            {
+                // Is the method set to null?
+                if (jpMethod.Value.Type == JTokenType.Null)
+                {
+                    // Remove it:
+                    methods.Remove(jpMethod.Name);
+                    continue;
+                }
+                if (jpMethod.Value.Type != JTokenType.Object)
+                {
+                    svc.Errors.Add("The method property `{0}` is expected to be of type object".F(jpMethod.Name));
+                    continue;
+                }
+
+                var joMethod = ((JObject)jpMethod.Value);
+
+                // Create a clone of the inherited descriptor or a new descriptor:
+                Method method;
+                if (methods.TryGetValue(jpMethod.Name, out method))
+                    method = method.Clone();
+                else
+                {
+                    method = new Method()
+                    {
+                        Name = jpMethod.Name,
+                        ParameterTypes = new Dictionary<string, ParameterType>(parameterTypes, StringComparer.OrdinalIgnoreCase),
+                        ConnectionString = connectionString,
+                        Errors = new List<string>(5)
+                    };
+                }
+                methods[jpMethod.Name] = method;
+                method.Service = svc;
+
+                Debug.Assert(method.Errors != null);
+
+                // Parse the definition:
+
+                method.DeprecatedMessage = getString(joMethod.Property("deprecated")).Interpolate(tokenLookup);
+
+                // Parse connection:
+                var jpConnection = joMethod.Property("connection");
+                if (jpConnection != null)
+                {
+                    method.ConnectionString = parseConnection(jpConnection, method.Errors, (s) => s.Interpolate(tokenLookup));
+                }
+
+                // Parse parameter types:
+                var jpParameterTypes = joMethod.Property("parameterTypes");
+                if (jpParameterTypes != null)
+                {
+                    // Assigning a `null`?
+                    if (jpParameterTypes.Value.Type == JTokenType.Null)
+                    {
+                        // Clear out all inherited parameter types:
+                        method.ParameterTypes.Clear();
+                    }
+                    else
+                    {
+                        parseParameterTypes(jpParameterTypes, method.Errors, method.ParameterTypes, (s) => s.Interpolate(tokenLookup));
+                    }
+                }
+
+                // Parse the parameters:
+                var jpParameters = joMethod.Property("parameters");
+                if (jpParameters != null)
+                {
+                    parseParameters(jpParameters, method, parameterTypes, tokenLookup);
+                }
+
+                // Parse query:
+                var jpQuery = joMethod.Property("query");
+                if (jpQuery != null)
+                {
+                    parseQuery(jpQuery, method, tokenLookup);
+                }
+
+                if (method.Query == null)
+                {
+                    method.Errors.Add("No query specified");
+                }
+
+                // Parse result mapping:
+                var jpMapping = joMethod.Property("result");
+                if (jpMapping != null)
+                {
+                    var joMapping = (JObject)jpMapping.Value;
+                    method.Mapping = parseMapping(joMapping, method.Errors);
+                }
+            } // foreach (var method)
+        }
+
+        private static void parseParameters(JProperty jpParameters, Method method, IDictionary<string, ParameterType> parameterTypes, Func<string, string> tokenLookup)
+        {
+            if (jpParameters.Value.Type != JTokenType.Object)
+            {
+                method.Errors.Add("The `parameters` property is expected to be of type object");
+                return;
+            }
+            var joParameters = (JObject)jpParameters.Value;
+
+            // Keep track of unique SQL parameter names:
+            var sqlNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Parse parameter properties:
+            method.Parameters = new Dictionary<string, Parameter>(joParameters.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var jpParam in joParameters.Properties())
+            {
+                var joParam = (JObject)jpParam.Value;
+                var sqlName = getString(joParam.Property("sqlName")).Interpolate(tokenLookup);
+                var sqlType = getString(joParam.Property("sqlType")).Interpolate(tokenLookup);
+                var typeName = getString(joParam.Property("type")).Interpolate(tokenLookup);
+                var isOptional = getBool(joParam.Property("optional")) ?? false;
+                object defaultValue = DBNull.Value;
+
+                // Assign a default `sqlName` if null:
+                if (sqlName == null) sqlName = "@" + jpParam.Name;
+                // TODO: validate sqlName is valid SQL parameter identifier!
+
+                if (sqlNames.Contains(sqlName))
+                {
+                    method.Errors.Add("Duplicate SQL parameter name (`sqlName`): '{0}'".F(sqlName));
+                    continue;
+                }
+
+                var param = new Parameter()
+                {
+                    Name = jpParam.Name,
+                    SqlName = sqlName,
+                    IsOptional = isOptional
+                };
+
+                if (sqlType != null)
+                {
+                    int? length;
+                    int? scale;
+                    var typeBase = parseSqlType(sqlType, out length, out scale);
+                    var sqlDbType = getSqlType(typeBase);
+                    if (!sqlDbType.HasValue)
+                    {
+                        method.Errors.Add("Unknown SQL type name '{0}' for parameter '{1}'".F(typeBase, jpParam.Name));
+                        continue;
+                    }
+                    else
+                    {
+                        param.SqlType = new ParameterType()
+                        {
+                            TypeBase = typeBase,
+                            SqlDbType = sqlDbType.Value,
+                            Length = length,
+                            Scale = scale
+                        };
+                    }
+                }
+                else
+                {
+                    ParameterType paramType;
+                    if (!parameterTypes.TryGetValue(typeName, out paramType))
+                    {
+                        method.Errors.Add("Could not find parameter type '{0}' for parameter '{1}'".F(typeName, jpParam.Name));
+                        continue;
+                    }
+                    param.Type = paramType;
+                }
+
+                if (isOptional)
+                {
+                    var jpDefault = joParam.Property("default");
+                    if (jpDefault != null)
+                        // Parse the default value into a SqlValue:
+                        param.DefaultValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
+                    else
+                        param.DefaultValue = DBNull.Value;
+                }
+
+                method.Parameters.Add(jpParam.Name, param);
+            }
+        }
+
+        private static void parseQuery(JProperty jpQuery, Method method, Func<string, string> tokenLookup)
+        {
+            if (jpQuery.Value.Type != JTokenType.Object)
+            {
+                method.Errors.Add("The `query` property is expected to be an object");
+                return;
+            }
+
+            var joQuery = (JObject)jpQuery.Value;
+            method.Query = new Query();
+
+            // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
+
+            // 'select' is required:
+            method.Query.Select = getString(joQuery.Property("select")).Interpolate(tokenLookup);
+            if (String.IsNullOrEmpty(method.Query.Select))
+            {
+                method.Errors.Add("A `select` clause is required");
+            }
+
+            // The rest are optional:
+            method.Query.From = getString(joQuery.Property("from")).Interpolate(tokenLookup);
+            method.Query.Where = getString(joQuery.Property("where")).Interpolate(tokenLookup);
+            method.Query.GroupBy = getString(joQuery.Property("groupBy")).Interpolate(tokenLookup);
+            method.Query.Having = getString(joQuery.Property("having")).Interpolate(tokenLookup);
+            method.Query.OrderBy = getString(joQuery.Property("orderBy")).Interpolate(tokenLookup);
+            method.Query.WithCTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
+            method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
+
+            // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
+            var xmlNamespaces = new Dictionary<string, string>(StringComparer.Ordinal);
+            var jpXmlns = joQuery.Property("xmlns");
+            if (jpXmlns != null)
+            {
+                var joXmlns = (JObject)jpXmlns.Value;
+                foreach (var jpNs in joXmlns.Properties())
+                {
+                    var prefix = jpNs.Name;
+                    var ns = getString(jpNs).Interpolate(tokenLookup);
+                    xmlNamespaces.Add(prefix, ns);
+                }
+                if (xmlNamespaces.Count > 0) method.Query.XMLNamespaces = xmlNamespaces;
+            }
+
+            string withCTEidentifier, withCTEexpression, select, from;
+            string where, groupBy, having, orderBy;
+
+            try
+            {
+                // Strip out all SQL comments:
+                withCTEidentifier = stripSQLComments(method.Query.WithCTEidentifier);
+                withCTEexpression = stripSQLComments(method.Query.WithCTEexpression);
+                select = stripSQLComments(method.Query.Select);
+                from = stripSQLComments(method.Query.From);
+                where = stripSQLComments(method.Query.Where);
+                groupBy = stripSQLComments(method.Query.GroupBy);
+                having = stripSQLComments(method.Query.Having);
+                orderBy = stripSQLComments(method.Query.OrderBy);
+            }
+            catch (Exception ex)
+            {
+                method.Errors.Add(ex.Message);
+                return;
+            }
+
+            // Allocate a StringBuilder with enough space to construct the query:
+            StringBuilder qb = new StringBuilder(
+                (withCTEidentifier ?? String.Empty).Length + (withCTEexpression ?? String.Empty).Length + ";WITH  AS ()\r\n".Length
+              + (select ?? String.Empty).Length + "SELECT ".Length
+              + (from ?? String.Empty).Length + "\r\nFROM ".Length
+              + (where ?? String.Empty).Length + "\r\nWHERE ".Length
+              + (groupBy ?? String.Empty).Length + "\r\nGROUP BY ".Length
+              + (having ?? String.Empty).Length + "\r\nHAVING ".Length
+              + (orderBy ?? String.Empty).Length + "\r\nORDER BY ".Length
+            );
+
+            try
+            {
+                // This is a very conservative approach and will lead to false-positives for things like EXISTS() and sub-queries:
+                if (containsSQLkeywords(select, "from", "into", "where", "group", "having", "order", "for"))
+                    method.Errors.Add("SELECT clause cannot contain FROM, INTO, WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
+                if (containsSQLkeywords(from, "where", "group", "having", "order", "for"))
+                    method.Errors.Add("FROM clause cannot contain WHERE, GROUP BY, HAVING, ORDER BY, or FOR");
+                if (containsSQLkeywords(where, "group", "having", "order", "for"))
+                    method.Errors.Add("WHERE clause cannot contain GROUP BY, HAVING, ORDER BY, or FOR");
+                if (containsSQLkeywords(groupBy, "having", "order", "for"))
+                    method.Errors.Add("GROUP BY clause cannot contain HAVING, ORDER BY, or FOR");
+                if (containsSQLkeywords(having, "order", "for"))
+                    method.Errors.Add("HAVING clause cannot contain ORDER BY or FOR");
+                if (containsSQLkeywords(orderBy, "for"))
+                    method.Errors.Add("ORDER BY clause cannot contain FOR");
+            }
+            catch (Exception ex)
+            {
+                method.Errors.Add(ex.Message);
+            }
+
+            if (method.Errors.Count != 0)
+                return;
+
+            // Construct the query:
+            bool didSemi = false;
+            if (xmlNamespaces.Count > 0)
+            {
+                didSemi = true;
+                qb.AppendLine(";WITH XMLNAMESPACES (");
+                using (var en = xmlNamespaces.GetEnumerator())
+                    for (int i = 0; en.MoveNext(); ++i)
+                    {
+                        var xmlns = en.Current;
+                        qb.AppendFormat("  '{0}' AS {1}", xmlns.Value.Replace("\'", "\'\'"), xmlns.Key);
+                        if (i < xmlNamespaces.Count - 1) qb.Append(",\r\n");
+                        else qb.Append("\r\n");
+                    }
+                qb.Append(")\r\n");
+            }
+            if (!String.IsNullOrEmpty(withCTEidentifier) && !String.IsNullOrEmpty(withCTEexpression))
+            {
+                if (!didSemi) qb.Append(';');
+                qb.AppendFormat("WITH {0} AS (\r\n{1}\r\n)\r\n", withCTEidentifier, withCTEexpression);
+            }
+            qb.AppendFormat("SELECT {0}", select);
+            if (!String.IsNullOrEmpty(from)) qb.AppendFormat("\r\nFROM {0}", from);
+            if (!String.IsNullOrEmpty(where)) qb.AppendFormat("\r\nWHERE {0}", where);
+            if (!String.IsNullOrEmpty(groupBy)) qb.AppendFormat("\r\nGROUP BY {0}", groupBy);
+            if (!String.IsNullOrEmpty(having)) qb.AppendFormat("\r\nHAVING {0}", having);
+            if (!String.IsNullOrEmpty(orderBy)) qb.AppendFormat("\r\nORDER BY {0}", orderBy);
+
+            // Assign the constructed query:
+            method.Query.SQL = qb.ToString();
         }
 
         private Dictionary<string, ColumnMapping> parseMapping(JObject joMapping, List<string> errors)
@@ -725,8 +802,16 @@ namespace REST0.APIService
             }
         }
 
-        static string parseConnection(JObject joConnection, List<string> errors, Func<string, string> interpolate)
+        static string parseConnection(JProperty jpConnection, List<string> errors, Func<string, string> interpolate)
         {
+            if (jpConnection.Value.Type != JTokenType.Object)
+            {
+                errors.Add("The `connection` property is expected to be of type object");
+                return null;
+            }
+
+            var joConnection = (JObject)jpConnection.Value;
+
             var csb = new SqlConnectionStringBuilder();
 
             try
@@ -795,8 +880,15 @@ namespace REST0.APIService
             return type;
         }
 
-        static void parseParameterTypes(JObject joParameterTypes, List<string> errors, IDictionary<string, ParameterType> parameterTypes, Func<string, string> interpolate)
+        static void parseParameterTypes(JProperty jpParameterTypes, List<string> errors, IDictionary<string, ParameterType> parameterTypes, Func<string, string> interpolate)
         {
+            if (jpParameterTypes.Value.Type != JTokenType.Object)
+            {
+                errors.Add("The `parameterTypes` property is expected to be of type object");
+                return;
+            }
+            var joParameterTypes = (JObject)jpParameterTypes.Value;
+
             foreach (var jpParam in joParameterTypes.Properties())
             {
                 // Null assignments cause removal:
@@ -913,6 +1005,11 @@ namespace REST0.APIService
                     }
 
                     // All of the block comment is now skipped.
+                }
+                else if (s[i] == '*')
+                {
+                    // No '*'s allowed.
+                    throw new Exception("No asterisks are allowed in any query clause");
                 }
                 else if (s[i] == ';')
                 {
@@ -1046,6 +1143,11 @@ namespace REST0.APIService
                         throw new Exception("Too many closing parentheses encountered");
                     }
                     ++i;
+                }
+                else if (s[i] == '*')
+                {
+                    // No '*'s allowed.
+                    throw new Exception("No asterisks are allowed in any query clause");
                 }
                 else if (s[i] == ';')
                 {
