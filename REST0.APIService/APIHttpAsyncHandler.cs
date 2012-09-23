@@ -215,7 +215,7 @@ namespace REST0.APIService
         {
             if (prop == null) return null;
             if (prop.Value.Type == JTokenType.Null) return null;
-            return (int?)((JValue)prop.Value).Value;
+            return (int?)(long?)((JValue)prop.Value).Value;
         }
 
         ServiceCollection ParseConfigData(JObject joConfig)
