@@ -159,6 +159,7 @@ property.
 
 There are several elements of a method descriptor:
 
+  * `description`: (optional) gives a description of the method.
   * `parameters`: (optional) defines a mapping of query-string parameter names to their SQL parameter counterparts.
   * `parameterTypes`: (optional) defines method-specific parameter types.
   * `connection`: (optional) override the service-level DB connection.
@@ -304,8 +305,14 @@ Properties of the parameter descriptor:
   * `sqlName`: (required) the SQL parameter name to create for usage in the query
   * `type`: a named parameter type from a `parameterTypes` collection (mutually exclusive to `sqlType`)
   * `sqlType`: an anonymous SQL parameter type (e.g. `nvarchar(20)`) (mutually exclusive to `type`)
-  * `optional`: a boolean value which represents the optionality of the parameter (default is false)
-  * `default`: assign an explicit default value for the parameter (default is NULL)
+  * `optional`: (optional) a boolean value which represents the optionality of the parameter (default is false)
+  * `default`: (optional) assign an explicit default value for the parameter (default is NULL)
+  * `description`: (optional) gives a description of the parameter.
+
+The `type` property names an existing type from a `parameterTypes` section. The `sqlType` property just describes an
+anonymous SQL type used only for the current parameter. For some cases, it's best to not bother defining a named
+parameter type just for a single parameter. These should be used sparingly, e.g. for one-off cases, not to be established
+as a best practice.
 
 In order to execute a method with parameters, simply pass them by name as query-string parameters, like so:
 
@@ -363,10 +370,10 @@ More examples:
   },
 ```
 
-The `type` property names an existing type from a `parameterTypes` section. The `sqlType` property just describes an
-anonymous SQL type used only for the current parameter. For some cases, it's best to not bother defining a named
-parameter type just for a single parameter. These should be used sparingly, e.g. for one-off cases, not to be established
-as a best practice.
+Properties of a parameter type descriptor:
+
+  * `type`: (required) the SQL type of the parameter.
+  * `description`: (optional) gives a description of the parameter.
 
 Service Aliases
 ---------------
