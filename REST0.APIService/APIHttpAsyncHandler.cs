@@ -1946,13 +1946,14 @@ namespace REST0.APIService
                 {
                     var result = await ReadResult(method, dr, RowMapperUseMapping);
                     swReadTime.Stop();
-                    var meta = new
+
+                    var meta = new MetadataSerialized
                     {
                         configHash = main.HashHexString,
                         service = method.Service.Name,
                         method = method.Name,
                         deprecated = method.DeprecatedMessage,
-                        timings = new
+                        timings = new MetadataTimingsSerialized
                         {
                             open = Math.Round(swOpenTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
                             exec = Math.Round(swExecTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
@@ -1960,6 +1961,7 @@ namespace REST0.APIService
                             total = Math.Round((swOpenTime.ElapsedTicks + swExecTime.ElapsedTicks + swReadTime.ElapsedTicks) * 1000m / (decimal)Stopwatch.Frequency, 2),
                         }
                     };
+
                     return new JsonResult(result, meta);
                 }
                 catch (JsonResultException jex)

@@ -68,6 +68,8 @@
     <Compile Include="Extensions.cs" />
     <Compile Include="APIHttpAsyncHandler.cs" />
     <Compile Include="HsonReader.cs" />
+    <Compile Include="MetadataSerialized.cs" />
+    <Compile Include="MetadataTimingsSerialized.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Descriptors\Parameter.cs" />

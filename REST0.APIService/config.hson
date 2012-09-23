@@ -34,7 +34,7 @@
     },
     // This is the global set of common query parameter types. This set is inherited by each root service and their derived services.
     "parameterTypes": {
-        "StudentID":        { "type": "int", "description": "A unique identifier for a Student record" },
+        "StudentID":        { "type": "int",                "description": "A unique identifier for a Student record" },
         "FirstName":        { "type": "nvarchar(50)" },
         "DateTimeOffset":   { "type": "datetimeoffset(7)" },
         "Grade":            { "type": "decimal(8,4)" },
@@ -98,8 +98,7 @@
                         "test":     { "sqlName": "@test",   "type": "Grade",        "optional": true }
                     },
                     "query": {
-                        // Adding a property name starting with "xmlns:" will add a ;WITH XMLNAMESPACES directive
-                        // useful for selecting data from `xml` typed columns in your query.
+                        // Setting up the WITH XMLNAMESPACES clause for the SQLXML query:
                         "xmlns": {
                             "sis":    "http://sis.example.org/v1",
                         },
