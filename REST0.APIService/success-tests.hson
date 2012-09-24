@@ -117,6 +117,14 @@
                 "from":     "test",
                 "select":   "test34.query('sis:*') as test34sis",
             }
+        },
+        "TestMax": {
+            "parameters": {
+                "max": { "sqlName": "@max", "sqlType": "varchar(max)" }
+            },
+            "query": {
+                "select":   "@max",
+            }
         }
     }
 }

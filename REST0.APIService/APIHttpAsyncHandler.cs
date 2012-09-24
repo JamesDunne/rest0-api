@@ -648,7 +648,7 @@ namespace REST0.APIService
             method.Query.WithCTEidentifier = getString(joQuery.Property("withCTEidentifier")).Interpolate(tokenLookup);
             method.Query.WithCTEexpression = getString(joQuery.Property("withCTEexpression")).Interpolate(tokenLookup);
 
-            // Parse "xmlns:prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
+            // Parse "xmlns" dictionary of "prefix": "http://uri.example.org/namespace" properties for WITH XMLNAMESPACES:
             var xmlNamespaces = new Dictionary<string, string>(StringComparer.Ordinal);
             var jpXmlns = joQuery.Property("xmlns");
             if (jpXmlns != null)
@@ -829,6 +829,7 @@ namespace REST0.APIService
                 csb.DataSource = interpolate(getString(joConnection.Property("dataSource")));
                 csb.InitialCatalog = interpolate(getString(joConnection.Property("initialCatalog")));
 
+                // Get the UserID/Password or set IntegratedSecurity:
                 var userID = interpolate(getString(joConnection.Property("userID")));
                 if (userID != null)
                 {
@@ -848,8 +849,9 @@ namespace REST0.APIService
                 // 512 <= packetSize <= 32768
                 csb.PacketSize = Math.Max(512, Math.Min(32768, getInt(joConnection.Property("packetSize")) ?? 32768));
 
-                // We must enable async processing:
+                // We *must* enable async processing:
                 csb.AsynchronousProcessing = true;
+                // This only affects failover cluster behavior and does not imply read-only mode:
                 csb.ApplicationIntent = ApplicationIntent.ReadOnly;
 
                 // Finalize the connection string and return it:
@@ -883,7 +885,6 @@ namespace REST0.APIService
 
                 if (strlength.Equals("max", StringComparison.OrdinalIgnoreCase))
                 {
-                    // TODO: ?
                     length = -1;
                 }
                 else
