@@ -483,3 +483,42 @@ Examples:
 ```
 
 Here we can see the usage of the `"$"` dictionary and the string interpolation syntax found in the `query` properties.
+
+Benchmarks
+==========
+
+Test setup, all on one server, running on commodity desktop hardware.
+
+```
+Windows Server 2008 R2 x64 (boot from VHD)
+Intel Core i5-2500K @ 3.30GHz
+8.0 GB RAM
+
+SQL Server 2008 R2 x64
+Running locally
+
+wcat 6.4 x64 test runner
+  10 sec warmup
+  20 sec duration
+  10 sec cooldown
+
+Request URLs per "transaction":
+  /data/sis;core;v1/GetStudent?id=1
+  /data/sis;core;v1/GetStudent?id=2
+  /data/sis;core;v1/GetStudent?id=3
+  /data/sis;core/GetStudentByName?lastName=Dunne&firstName=James
+
+Results:
+
+  Virtual clients | Requests/sec | Errors
+  ----------------+--------------+---------
+               16 | 10920.50     | 0
+               32 | 10950.75     | 0
+               64 | 10918.80     | 0
+              128 | 10809.10     | 0
+              256 | 10346.60     | 0
+              512 | 10747.20     | 0
+
+There is a max limit of 1,000 concurrent connections that I cannot overcome currently. This will likely require rewriting
+the main event loop of the REST0 framework.
+```
