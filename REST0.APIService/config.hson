@@ -54,8 +54,9 @@
             },
             // The shared DB connection for all methods (but may be overridden per method):
             "connection": {
-                "dataSource":       "(local)\\SQLEXPRESS",
-                "initialCatalog":   "APITest"
+                "dataSource":       "(local)",
+                "initialCatalog":   "APITest",
+                "connectTimeout":   2
             },
             // This is the main method definition section:
             "methods": {

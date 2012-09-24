@@ -2,9 +2,9 @@ scenario
 {
     name    = "API";
 
-    warmup      = 60;
-    duration    = 60;
-    cooldown    = 60;
+    warmup      = 10;
+    duration    = 50;
+    cooldown    = 10;
 
     /////////////////////////////////////////////////////////////////
     //
