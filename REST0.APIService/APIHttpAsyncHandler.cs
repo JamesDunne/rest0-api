@@ -1216,7 +1216,7 @@ namespace REST0.APIService
             return false;
         }
 
-        static JsonResult getErrorResponse(Exception ex)
+        static JsonRootResponse getErrorResponse(Exception ex)
         {
             JsonResultException jex;
             JsonSerializationException jsex;
@@ -1228,7 +1228,7 @@ namespace REST0.APIService
 
             if ((jex = ex as JsonResultException) != null)
             {
-                return new JsonResult(jex.StatusCode, jex.Message);
+                return new JsonRootResponse(statusCode: jex.StatusCode, message: jex.Message);
             }
             else if ((jsex = ex as JsonSerializationException) != null)
             {
@@ -1240,7 +1240,7 @@ namespace REST0.APIService
                     innerException
                 };
 
-                return new JsonResult(500, jsex.Message, new[] { errorData });
+                return new JsonRootResponse(statusCode: 500, message: jsex.Message, errors: new[] { errorData });
             }
             else if ((sqex = ex as SqlException) != null)
             {
@@ -1256,11 +1256,11 @@ namespace REST0.APIService
                     innerException
                 };
 
-                return new JsonResult(500, ex.Message, new[] { errorData });
+                return new JsonRootResponse(statusCode: 500, message: ex.Message, errors: new[] { errorData });
             }
         }
 
-        static JsonResult sqlError(SqlException sqex)
+        static JsonRootResponse sqlError(SqlException sqex)
         {
             int statusCode = 500;
 
@@ -1289,7 +1289,7 @@ namespace REST0.APIService
             }
 
             string message = msgBuilder.ToString();
-            return new JsonResult(statusCode, message, errorData);
+            return new JsonRootResponse(statusCode: statusCode, message: message, errors: errorData.ToArray());
         }
 
         /// <summary>
@@ -1579,7 +1579,7 @@ namespace REST0.APIService
 
             // GET requests only:
             if (req.HttpMethod != "GET")
-                return new JsonResult(405, "Method Not Allowed");
+                return new JsonRootResponse(statusCode: 405, statusDescription: "HTTP Method Not Allowed", message: "HTTP Method Not Allowed");
 
             // Capture the current service configuration values only once per connection in case they update during:
             var main = this.services;
@@ -1588,10 +1588,11 @@ namespace REST0.APIService
             // Not getting any further than this with severe errors:
             if (main.Value.Errors.Count > 0)
             {
-                return new JsonResult(500, "Severe errors encountered", new
-                {
-                    errors = main.Value.Errors
-                });
+                return new JsonRootResponse(
+                    statusCode: 500,
+                    message: "Severe errors encountered",
+                    errors: main.Value.Errors.ToArray()
+                );
             }
 
             // Split the path into component parts:
@@ -1602,16 +1603,17 @@ namespace REST0.APIService
 
             if (path.Length == 0)
             {
-                // TODO: some descriptive information here.
-                return new JsonResult(new
-                {
-                    configHash = main.HashHexString,
-                    links = new RestfulLink[]
+                return new JsonRootResponse(
+                    meta: new
                     {
-                        RestfulLink.Create("meta", "/errors"),
-                        RestfulLink.Create("meta", "/meta")
+                        configHash = main.HashHexString,
+                        links = new RestfulLink[]
+                        {
+                            RestfulLink.Create("meta", "/errors"),
+                            RestfulLink.Create("meta", "/meta")
+                        }
                     }
-                });
+                );
             }
 
             string action = path[0];
@@ -1639,7 +1641,15 @@ namespace REST0.APIService
                 }
                 else
                 {
-                    return new JsonResult(400, "Unknown request type '{0}'".F(action));
+                    return new JsonRootResponse(
+                        statusCode: 400,
+                        statusDescription: "Unknown request type",
+                        message: "Unknown request type '{0}'".F(action),
+                        meta: new
+                        {
+                            configHash = main.HashHexString
+                        }
+                    );
                 }
             }
 
@@ -1648,10 +1658,19 @@ namespace REST0.APIService
 
             Service service;
             if (!main.Value.Services.TryGetValue(serviceName, out service))
-                return new JsonResult(400, "Unknown service name '{0}'".F(serviceName), new
-                {
-                    service = serviceName
-                });
+                return new JsonRootResponse(
+                    statusCode: 400,
+                    statusDescription: "Unknown service name",
+                    message: "Unknown service name '{0}'".F(serviceName),
+                    meta: new
+                    {
+                        configHash = main.HashHexString
+                    },
+                    errors: new[]
+                    {
+                        new { serviceName }
+                    }
+                );
 
             if (path.Length == 2)
             {
@@ -1671,22 +1690,46 @@ namespace REST0.APIService
                 }
                 else
                 {
-                    return new JsonResult(400, "Unknown request type '{0}'".F(action));
+                    return new JsonRootResponse(
+                        statusCode: 400,
+                        statusDescription: "Unknown request type",
+                        message: "Unknown request type '{0}'".F(action),
+                        meta: new
+                        {
+                            configHash = main.HashHexString
+                        }
+                    );
                 }
             }
             if (path.Length > 3)
             {
-                return new JsonResult(400, "Too many path components supplied");
+                return new JsonRootResponse(
+                    statusCode: 400,
+                    statusDescription: "Too many path components supplied",
+                    message: "Too many path components supplied",
+                    meta: new
+                    {
+                        configHash = main.HashHexString
+                    }
+                );
             }
 
             // Find method:
             string methodName = path[2];
             Method method;
             if (!service.Methods.TryGetValue(methodName, out method))
-                return new JsonResult(400, "Unknown method name '{0}'".F(methodName), new
-                {
-                    method = methodName
-                });
+                return new JsonRootResponse(
+                    statusCode: 400,
+                    statusDescription: null,
+                    message: "Unknown method name '{0}'".F(methodName),
+                    meta: new
+                    {
+                        configHash = main.HashHexString
+                    },
+                    errors: new[] {
+                        new { methodName }
+                    }
+                );
 
             if (action == "meta")
             {
@@ -1706,99 +1749,116 @@ namespace REST0.APIService
             }
             else
             {
-                return new JsonResult(400, "Unknown request type '{0}'".F(action));
+                return new JsonRootResponse(
+                    statusCode: 400,
+                    statusDescription: "Unknown request type",
+                    message: "Unknown request type '{0}'".F(action),
+                    meta: new
+                    {
+                        configHash = main.HashHexString
+                    }
+                );
             }
         }
 
         IHttpResponseAction metaAll(SHA1Hashed<ServiceCollection> main)
         {
             // Report all service descriptors:
-            return new JsonResult(new
-            {
-                configHash = main.HashHexString,
-                errors = main.Value.Errors,
-                serviceLinks = main.Value.Services.ToDictionary(
-                    s => s.Key,
-                    s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
-                    StringComparer.OrdinalIgnoreCase
-                )
-            });
+            return new JsonRootResponse(
+                meta: new
+                {
+                    configHash = main.HashHexString,
+                    errors = main.Value.Errors,
+                    serviceLinks = main.Value.Services.ToDictionary(
+                        s => s.Key,
+                        s => RestfulLink.Create("child", "/meta/{0}".F(s.Value.Name)),
+                        StringComparer.OrdinalIgnoreCase
+                    )
+                }
+            );
         }
 
         IHttpResponseAction metaService(SHA1Hashed<ServiceCollection> main, Service svc)
         {
-            return new JsonResult(new
-            {
-                configHash = main.HashHexString,
-                service = new ServiceSerialized(svc)
-            });
+            return new JsonRootResponse(
+                meta: new
+                {
+                    configHash = main.HashHexString,
+                    service = new ServiceSerialized(svc)
+                }
+            );
         }
 
         IHttpResponseAction metaMethod(SHA1Hashed<ServiceCollection> main, Method method)
         {
-            return new JsonResult(new
-            {
-                configHash = main.HashHexString,
-                serviceLink = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
-                selfLink = RestfulLink.Create("meta", "/meta/{0}/{1}".F(method.Service.Name, method.Name)),
-                dataLink = RestfulLink.Create("data", "/data/{0}/{1}".F(method.Service.Name, method.Name)),
-                method = new MethodSerialized(method)
-            });
+            return new JsonRootResponse(
+                meta: new
+                {
+                    configHash = main.HashHexString,
+                    serviceLink = RestfulLink.Create("parent", "/meta/{0}".F(method.Service.Name)),
+                    selfLink = RestfulLink.Create("meta", "/meta/{0}/{1}".F(method.Service.Name, method.Name)),
+                    dataLink = RestfulLink.Create("data", "/data/{0}/{1}".F(method.Service.Name, method.Name)),
+                    method = new MethodSerialized(method)
+                }
+            );
         }
 
         IHttpResponseAction errorsMethod(SHA1Hashed<ServiceCollection> main, Service desc, Method method)
         {
-            return new JsonResult(new
-            {
-                configHash = main.HashHexString,
-                service = desc.Name,
-                method = method.Name,
-                errors = method.Errors
-            });
+            return new JsonRootResponse(
+                meta: new
+                {
+                    configHash = main.HashHexString,
+                    serviceName = desc.Name,
+                    methodName = method.Name,
+                    errors = method.Errors
+                }
+            );
         }
 
         IHttpResponseAction errorsService(SHA1Hashed<ServiceCollection> main, Service desc)
         {
-            return new JsonResult(new
-            {
-                configHash = main.HashHexString,
-                service = desc.Name,
-                errors = desc.Errors,
-                methods = desc.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
-                    m => m.Key,
-                    m => new
-                    {
-                        errors = m.Value.Errors
-                    },
-                    StringComparer.OrdinalIgnoreCase
-                )
-            });
+            return new JsonRootResponse(
+                meta: new
+                {
+                    configHash = main.HashHexString,
+                    serviceName = desc.Name,
+                    errors = desc.Errors,
+                    methodErrors = desc.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
+                        m => m.Key,
+                        m => new
+                        {
+                            errors = m.Value.Errors
+                        },
+                        StringComparer.OrdinalIgnoreCase
+                    )
+                }
+            );
         }
 
         IHttpResponseAction errorsAll(SHA1Hashed<ServiceCollection> main)
         {
-            return new JsonResult(new
-            {
-                configHash = main.HashHexString,
-                errors = main.Value.Errors,
-                services =
-                    main.Value.Services.Where(s => s.Value.Errors.Any() || s.Value.Methods.Any(m => m.Value.Errors.Any())).ToDictionary(
-                        s => s.Key,
-                        s => new
-                        {
-                            errors = s.Value.Errors,
-                            methods = s.Value.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
-                                m => m.Key,
-                                m => new
-                                {
-                                    errors = m.Value.Errors
-                                },
-                                StringComparer.OrdinalIgnoreCase
-                            )
-                        },
-                        StringComparer.OrdinalIgnoreCase
-                    )
-            });
+            return new JsonRootResponse(
+                meta: new
+                {
+                    configHash = main.HashHexString,
+                    errors = main.Value.Errors,
+                    serviceErrors =
+                        main.Value.Services.Where(s => s.Value.Errors.Any() || s.Value.Methods.Any(m => m.Value.Errors.Any())).ToDictionary(
+                            s => s.Key,
+                            s => new
+                            {
+                                errors = s.Value.Errors,
+                                methodErrors = s.Value.Methods.Where(m => m.Value.Errors.Any()).ToDictionary(
+                                    m => m.Key,
+                                    m => new { errors = m.Value.Errors },
+                                    StringComparer.OrdinalIgnoreCase
+                                )
+                            },
+                            StringComparer.OrdinalIgnoreCase
+                        )
+                }
+            );
         }
 
         async Task<IHttpResponseAction> dataMethod(SHA1Hashed<ServiceCollection> main, Method method, System.Collections.Specialized.NameValueCollection queryString)
@@ -1806,13 +1866,18 @@ namespace REST0.APIService
             // Check for descriptor errors:
             if (method.Errors.Count > 0)
             {
-                return new JsonResult(500, "Bad method descriptor", new
-                {
-                    configHash = main.HashHexString,
-                    service = method.Service.Name,
-                    method = method.Name,
-                    errors = method.Errors
-                });
+                return new JsonRootResponse(
+                    statusCode: 500,
+                    statusDescription: "Bad method descriptor",
+                    message: "Bad method descriptor",
+                    meta: new
+                    {
+                        configHash = main.HashHexString,
+                        serviceName = method.Service.Name,
+                        methodName = method.Name,
+                        errors = method.Errors.ToArray()
+                    }
+                );
             }
 
             // Check required parameters:
@@ -1830,14 +1895,19 @@ namespace REST0.APIService
                 );
 
                 if (missingParams.Count > 0)
-                    return new JsonResult(400, "Missing required parameters", new
-                    {
-                        parameters = missingParams.ToDictionary(
-                            p => p,
-                            p => new ParameterSerialized(method.Parameters[p]),
-                            StringComparer.OrdinalIgnoreCase
-                        )
-                    });
+                    return new JsonRootResponse(
+                        statusCode: 400,
+                        statusDescription: "Missing required parameters",
+                        message: "Missing required parameters",
+                        meta: new
+                        {
+                            parameters = missingParams.ToDictionary(
+                                p => p,
+                                p => new ParameterSerialized(method.Parameters[p]),
+                                StringComparer.OrdinalIgnoreCase
+                            )
+                        }
+                    );
 
                 missingParams = null;
             }
@@ -1881,12 +1951,18 @@ namespace REST0.APIService
                             }
                         }
 
+                        // TODO: consider rolling all errors up into a single response
                         if (!isValid)
-                            return new JsonResult(400, "Invalid parameter value", new
-                            {
-                                parameter = param.Key,
-                                message
-                            });
+                            return new JsonRootResponse(
+                                statusCode: 400,
+                                statusDescription: "Invalid parameter value",
+                                message: "Invalid parameter value for '{0}'".F(param.Key),
+                                meta: new
+                                {
+                                    parameterName = param.Key,
+                                    message
+                                }
+                            );
 
                         // Add the SQL parameter:
                         var sqlprm = cmd.Parameters.Add(param.Value.Name, paramType.SqlDbType);
@@ -1934,7 +2010,7 @@ namespace REST0.APIService
                 {
                     swExecTime.Stop();
                     // SQL Parameter validation only gives `null` for `aex.ParamName`.
-                    return new JsonResult(400, aex.Message);
+                    return new JsonRootResponse(400, aex.Message);
                 }
                 catch (Exception ex)
                 {
@@ -1963,12 +2039,12 @@ namespace REST0.APIService
                         }
                     };
 
-                    return new JsonResult(result, meta);
+                    return new JsonRootResponse(meta: meta, results: result);
                 }
                 catch (JsonResultException jex)
                 {
                     swReadTime.Stop();
-                    return new JsonResult(jex.StatusCode, jex.Message);
+                    return new JsonRootResponse(statusCode: jex.StatusCode, message: jex.Message);
                 }
                 catch (Exception ex)
                 {
