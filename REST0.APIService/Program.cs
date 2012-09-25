@@ -20,10 +20,23 @@ namespace REST0.APIService
                 return;
             }
 
+            // Configurable number of accept requests active at one time per CPU core:
+            int accepts = 4;
+            string acceptsString;
+            if (configValues.TryGetSingleValue("accepts", out acceptsString))
+            {
+                if (!Int32.TryParse(acceptsString, out accepts))
+                    accepts = 4;
+            }
+            else
+            {
+                accepts = 4;
+            }
+
             // Create an HTTP host and start it:
             var handler = new APIHttpAsyncHandler();
 
-            var host = new HttpAsyncHost(handler);
+            var host = new HttpAsyncHost(handler, accepts);
             host.SetConfiguration(configValues);
             host.Run(bindUriPrefixes.ToArray());
         }

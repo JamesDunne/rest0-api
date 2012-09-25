@@ -110,8 +110,9 @@ namespace System.Hson
         /// <returns></returns>
         HsonReader defaultFileImport(string path)
         {
-            // Treat paths as relative to current directory.
-            return new HsonReader(path, base.CurrentEncoding, detectEncodingFromByteOrderMarks, bufferSize);
+            // Treat paths as relative to current directory:
+            var absPath = Path.Combine(Path.GetDirectoryName(this.path), path);
+            return new HsonReader(absPath, base.CurrentEncoding, detectEncodingFromByteOrderMarks, bufferSize);
         }
 
         #endregion

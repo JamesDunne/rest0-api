@@ -54,7 +54,7 @@
             },
             // The shared DB connection for all methods (but may be overridden per method):
             "connection": {
-                "dataSource":       "(local)",
+                "dataSource":       "(local)\\SQLEXPRESS",
                 "initialCatalog":   "APITest",
                 "connectTimeout":   2
             },
@@ -145,8 +145,8 @@
         // local files directly into this document. This helps break out large service offerings
         // into more manageable divisions. `@import` directives may be placed at any point in the
         // HSON document, so long as the final result produces a well-formed JSON result.
-        @import("../../sis;core;v5.hson"),
-        @import("../../error-tests.hson"),
-        @import("../../success-tests.hson")
+        @import("sis;core;v5.hson"),
+        @import("error-tests.hson"),
+        @import("success-tests.hson")
     }
 }
