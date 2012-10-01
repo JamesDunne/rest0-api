@@ -1720,7 +1720,7 @@ namespace REST0.APIService
             if (!service.Methods.TryGetValue(methodName, out method))
                 return new JsonRootResponse(
                     statusCode: 400,
-                    statusDescription: null,
+                    statusDescription: "Unknown method name",
                     message: "Unknown method name '{0}'".F(methodName),
                     meta: new
                     {
@@ -2030,6 +2030,7 @@ namespace REST0.APIService
                         service = method.Service.Name,
                         method = method.Name,
                         deprecated = method.DeprecatedMessage,
+                        // Timings are in msec:
                         timings = new MetadataTimingsSerialized
                         {
                             open = Math.Round(swOpenTime.ElapsedTicks * 1000m / (decimal)Stopwatch.Frequency, 2),
