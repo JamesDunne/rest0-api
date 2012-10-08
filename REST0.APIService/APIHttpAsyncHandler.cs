@@ -1976,10 +1976,12 @@ namespace REST0.APIService
                 //cmd.CommandTimeout = 360;   // seconds
                 cmd.CommandType = CommandType.Text;
                 // Set TRANSACTION ISOLATION LEVEL and optionally ROWCOUNT before the query:
-                cmd.CommandText = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;" + Environment.NewLine;
+                const string setIsoLevel = "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;\r\n";
+                var sbCmd = new StringBuilder(setIsoLevel, setIsoLevel.Length + method.Query.SQL.Length);
                 //if (rowLimit > 0)
-                //    cmd.CommandText += "SET ROWCOUNT {0};".F(rowLimit) + Environment.NewLine;
-                cmd.CommandText += method.Query.SQL;
+                //    sbCmd.Append("SET ROWCOUNT {0};\r\n".F(rowLimit));
+                sbCmd.Append(method.Query.SQL);
+                cmd.CommandText = sbCmd.ToString();
 
                 // Stopwatches used for precise timing:
                 Stopwatch swOpenTime, swExecTime, swReadTime;

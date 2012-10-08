@@ -53,7 +53,8 @@ namespace System.Hson
 
     /// <summary>
     /// This class reads in a stream assumed to be in HSON format (JSON with human-readable additions) and
-    /// emits JSON as output to any Read() command. The output JSON is not guaranteed to be well-formed (see remarks).
+    /// emits JSON as output to any Read() command. The input HSON is not guaranteed to be well-formed JSON,
+    /// thus the output JSON is also not guaranteed to be well-formed (see remarks).
     /// </summary>
     /// <remarks>
     /// The JSON subset of HSON is only superficially parsed to clean out comments and reparse multi-line string literals.
