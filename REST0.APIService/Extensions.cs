@@ -10,6 +10,7 @@ namespace System
     {
         public static string F(this string format, params object[] args)
         {
+            if (args == null || args.Length == 0) return format;
             return String.Format(format, args);
         }
 
