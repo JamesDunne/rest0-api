@@ -157,7 +157,7 @@ namespace REST0.APIService
             }
 
             // Load the local HSON file:
-            using (var hsr = new HsonReader(path, UTF8.WithoutBOM, true, 8192))
+            using (var hsr = new JsonTokenStream(new HsonReader(path, UTF8.WithoutBOM, true, 8192).Read()))
             {
                 try
                 {
@@ -167,20 +167,21 @@ namespace REST0.APIService
                 {
                     int targetLineNumber = jrex.LineNumber;
                     if (targetLineNumber > 0) targetLineNumber--;
-                    int targetLinePosition = jrex.LinePosition;
-                    if (targetLinePosition > 0) targetLinePosition--;
 
                     // Look up the target line/col in the HSON reader's source map:
                     var map = hsr.SourceMap;
                     var segments = map.Lines[targetLineNumber].Segments;
 
+                    int targetLinePosition = jrex.LinePosition;
+
                     // Do a binary-search over the segments by line position:
-                    int idx = Array.BinarySearch(segments, new REST0.APIService.SourceMap.Segment(targetLinePosition), REST0.APIService.SourceMap.SegmentByTargetLinePosComparer.Default);
+                    int idx = Array.BinarySearch(segments, new System.SourceMap.Segment(targetLinePosition), System.SourceMap.SegmentByTargetLinePosComparer.Default);
                     if (idx < 0)
                     {
                         // Wasn't found exactly but we know where it should be.
                         idx = ~idx - 1;
                     }
+                    ++idx;
 
                     // Pull out the error message:
                     string message = jrex.Message;
@@ -188,7 +189,8 @@ namespace REST0.APIService
                     if (lasti >= 0)
                         message = message.Substring(0, lasti);
 
-                    throw new Exception("{0} (line {1}, col {2}): {3}".F(segments[idx].SourceName, segments[idx].SourceLineNumber + 1, segments[idx].SourceLinePosition + 1, message));
+                    // Rethrow the JsonReaderException:
+                    throw new Exception("{0} (line {1}, col {2}): {3}".F(segments[idx].SourceName, segments[idx].SourceLineNumber, segments[idx].SourceLinePosition, message));
                 }
             }
         }

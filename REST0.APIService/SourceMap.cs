@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 
-namespace REST0.APIService.SourceMap
+namespace System.SourceMap
 {
     [DebuggerDisplay("{TargetLinePosition};{SourceName};{SourceLineNumber};{SourceLinePosition}")]
     public struct Segment
@@ -38,6 +38,26 @@ namespace REST0.APIService.SourceMap
         public int Compare(Segment x, Segment y)
         {
             return x.TargetLinePosition.CompareTo(y.TargetLinePosition);
+        }
+    }
+
+    public struct Line
+    {
+        public readonly Segment[] Segments;
+
+        public Line(Segment[] segments)
+        {
+            Segments = segments;
+        }
+    }
+
+    public struct Map
+    {
+        public readonly Line[] Lines;
+
+        public Map(Line[] lines)
+        {
+            Lines = lines;
         }
     }
 }

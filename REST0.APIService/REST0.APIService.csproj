@@ -97,9 +97,7 @@
     <Compile Include="Descriptors\Method.cs" />
     <Compile Include="Descriptors\ParameterType.cs" />
     <Compile Include="SHA1Hashed.cs" />
-    <Compile Include="SourceMap\Map.cs" />
-    <Compile Include="SourceMap\Segment.cs" />
-    <Compile Include="SourceMap\Line.cs" />
+    <Compile Include="SourceMap.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

@@ -29,10 +29,39 @@ namespace System.Hson
     /// </summary>
     public sealed class JsonEmitterOptions
     {
+        // No options yet.
+    }
+
+    /// <summary>
+    /// Represents a segment of some source input.
+    /// </summary>
+    public struct SourcePosition
+    {
         /// <summary>
-        /// Determines how whitespace is emitted. Default is NoWhitespace.
+        /// Name of source.
         /// </summary>
-        public JsonWhitespaceHandling WhitespaceHandling { get; set; }
+        public readonly string Name;
+        /// <summary>
+        /// 1-based line number.
+        /// </summary>
+        public readonly int LineNumber;
+        /// <summary>
+        /// 1-based position on the line.
+        /// </summary>
+        public readonly int LinePosition;
+
+        /// <summary>
+        /// Creates a source position record.
+        /// </summary>
+        /// <param name="name">Name of source.</param>
+        /// <param name="lineNumber">1-based line number.</param>
+        /// <param name="linePos">1-based position on the line.</param>
+        public SourcePosition(string name, int lineNumber, int linePos)
+        {
+            Name = name;
+            LineNumber = lineNumber;
+            LinePosition = linePos;
+        }
     }
 
     /// <summary>
@@ -40,45 +69,93 @@ namespace System.Hson
     /// </summary>
     public sealed class HsonParserException : Exception
     {
-        public HsonParserException(int line, int column, string messageFormat, params object[] args)
-            : base(String.Format("HSON parser error at line {0}({1})", line, column) + ": " + String.Format(messageFormat, args))
+        internal HsonParserException(SourcePosition source, string messageFormat, params object[] args)
+            : base(String.Format("HSON parser error in '{0}' at line {1}({2})", source.Name, source.LineNumber, source.LinePosition) + ": " + String.Format(messageFormat, args))
         {
-            Line = line;
-            Column = column;
+            SourcePosition = source;
         }
 
-        public int Line { get; private set; }
-        public int Column { get; private set; }
+        /// <summary>
+        /// Position of where the error occurred.
+        /// </summary>
+        public SourcePosition SourcePosition { get; private set; }
     }
 
     /// <summary>
-    /// This class reads in a stream assumed to be in HSON format (JSON with human-readable additions) and
-    /// emits JSON as output to any Read() command. The input HSON is not guaranteed to be well-formed JSON,
-    /// thus the output JSON is also not guaranteed to be well-formed (see remarks).
+    /// Represents a type of token that can be emitted.
+    /// </summary>
+    public enum TokenType
+    {
+        Invalid,
+
+        Raw,            // unparsed sequence of JSON characters: null, true, false, numbers, etc.
+        StringLiteral,
+        Colon,
+        Comma,
+        OpenCurly,
+        CloseCurly,
+        OpenBracket,
+        CloseBracket
+    }
+
+    /// <summary>
+    /// A token to be emitted.
+    /// </summary>
+    public struct Token
+    {
+        /// <summary>
+        /// The type of token.
+        /// </summary>
+        public TokenType TokenType;
+        /// <summary>
+        /// Optional raw text to be output with the token.
+        /// </summary>
+        public string Text;
+        /// <summary>
+        /// Where the source of this token was found.
+        /// </summary>
+        public SourcePosition Source;
+
+        public Token(SourcePosition source, TokenType type)
+            : this()
+        {
+            Source = source;
+            TokenType = type;
+        }
+
+        public Token(SourcePosition source, TokenType type, string text)
+            : this(source, type)
+        {
+            Text = text;
+        }
+    }
+
+    /// <summary>
+    /// This class reads in a local file assumed to be in HSON format (JSON with human-readable additions) and
+    /// emits JSON tokens. The input HSON is not guaranteed to be well-formed JSON, thus the output JSON is also
+    /// not guaranteed to be well-formed (see remarks).
     /// </summary>
     /// <remarks>
-    /// The JSON subset of HSON is only superficially parsed to clean out comments and reparse multi-line string literals.
+    /// The JSON subset of HSON is only lexed to parse the raw tokens and is not validated. Invalid tokens found
+    /// in the source HSON will result in errors.
     /// </remarks>
-    public sealed class HsonReader : StreamReader
+    public sealed class HsonReader
     {
-        readonly IEnumerator<char> hsonStripper;
+        readonly string path;
+        readonly Encoding encoding;
         readonly bool detectEncodingFromByteOrderMarks;
         readonly int bufferSize;
-        readonly string path;
 
         #region Constructors
 
         public HsonReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks = true, int bufferSize = 8192)
-            : base(path, encoding, detectEncodingFromByteOrderMarks, bufferSize)
         {
             this.path = path;
+            this.encoding = encoding;
             this.detectEncodingFromByteOrderMarks = detectEncodingFromByteOrderMarks;
             this.bufferSize = bufferSize;
-            this.hsonStripper = StripHSON();
             // Defaults:
-            this.EmitterOptions = new JsonEmitterOptions() { WhitespaceHandling = JsonWhitespaceHandling.NoWhitespace };
-            this.ImportStream = defaultFileImport;
-            this._segments = new List<REST0.APIService.SourceMap.Segment>(80);
+            this.Import = defaultFileImport;
         }
 
         #endregion
@@ -86,19 +163,9 @@ namespace System.Hson
         #region Options
 
         /// <summary>
-        /// Gets a mutable class that controls the JSON emitter options.
-        /// </summary>
-        public JsonEmitterOptions EmitterOptions { get; private set; }
-
-        /// <summary>
         /// Gets or sets a function used to import other HSON streams via the @import("path") directive.
         /// </summary>
-        public Func<string, HsonReader> ImportStream { get; set; }
-
-        /// <summary>
-        /// Gets or sets a function used to record source mapping segments.
-        /// </summary>
-        public Action<REST0.APIService.SourceMap.Segment> RecordMappingSegment { get; set; }
+        public Func<string, IEnumerator<Token>> Import { get; set; }
 
         #endregion
 
@@ -109,33 +176,11 @@ namespace System.Hson
         /// </summary>
         /// <param name="path"></param>
         /// <returns></returns>
-        HsonReader defaultFileImport(string path)
+        IEnumerator<Token> defaultFileImport(string path)
         {
             // Treat paths as relative to current directory:
             var absPath = Path.Combine(Path.GetDirectoryName(this.path), path);
-            return new HsonReader(absPath, base.CurrentEncoding, detectEncodingFromByteOrderMarks, bufferSize);
-        }
-
-        #endregion
-
-        #region Source Map
-
-        readonly List<REST0.APIService.SourceMap.Segment> _segments;
-        int _emittedCount;
-
-        /// <summary>
-        /// Gets a new instance representing the Source Map for reverse-mapping the output positions to source positions.
-        /// </summary>
-        public REST0.APIService.SourceMap.Map SourceMap
-        {
-            get
-            {
-                return new REST0.APIService.SourceMap.Map(
-                    new REST0.APIService.SourceMap.Line[1] {
-                        new REST0.APIService.SourceMap.Line(_segments.ToArray())
-                    }
-                );
-            }
+            return new HsonReader(absPath, encoding, detectEncodingFromByteOrderMarks, bufferSize).Read();
         }
 
         #endregion
@@ -147,374 +192,307 @@ namespace System.Hson
         /// only superficially parsed to clean out comments and reparse multi-line string literals.
         /// </summary>
         /// <returns></returns>
-        IEnumerator<char> StripHSON()
+        public IEnumerator<Token> Read()
         {
-            // Set lastLine diff than line so that we generate the first segment in source map:
-            int lastEmitLine = 0, lastEmitCol = 1;
-            int lastReadLine = 1, lastReadCol = 1;
-            int line = 1, col = 1;
-            int epos = 0;
-            char lastEmitted = (char)0;
-
-            // Records the last-emitted character:
-            Func<char, char> emit = (ec) =>
+            using (var fs = new FileStream(this.path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize))
+            using (var sr = new StreamReader(fs, encoding, detectEncodingFromByteOrderMarks, bufferSize))
             {
-                lastEmitted = ec;
+                // Track the last read position and next position in the source:
+                SourcePosition posRead = new SourcePosition(this.path, 1, 1),
+                               posNext = new SourcePosition(this.path, 1, 1);
 
-                // Keep track of source mapping of segments:
-                bool emitSegment = false;
-                if (lastEmitLine != lastReadLine) emitSegment = true;
-                else if (lastEmitCol != lastReadCol - 1) emitSegment = true;
-
-                // Record a new segment of columns:
-                if (emitSegment)
+                // Reads the next character and keeps track of current position in the source:
+                Func<int> readNext = () =>
                 {
-                    var seg = new REST0.APIService.SourceMap.Segment(epos, this.path, lastReadLine - 1, lastReadCol - 1);
-                    _segments.Add(seg);
-                    if (RecordMappingSegment != null)
-                        RecordMappingSegment(seg);
-                }
+                    posRead = posNext;
 
-                lastEmitLine = lastReadLine;
-                lastEmitCol = lastReadCol;
-                ++_emittedCount;
-                ++epos;
+                    // Read single chars at a time, relying on buffered reads for performance.
+                    // Attempt to read a single char from the input stream:
+                    int x = sr.Read();
 
-                return ec;
-            };
+                    // EOF?
+                    if (x == -1) return x;
+                    // CR does not affect output position:
+                    else if (x == '\r') return x;
+                    // LF affects output position:
+                    else if (x == '\n')
+                        posNext = new SourcePosition(posRead.Name, posRead.LineNumber + 1, 1);
+                    // TODO: How to treat '\t'?
+                    else
+                        posNext = new SourcePosition(posRead.Name, posRead.LineNumber, posRead.LinePosition + 1);
 
-            // Reads the next character and keeps track of current line/column:
-            Func<int> readNext = () =>
-            {
-                lastReadLine = line;
-                lastReadCol = col;
-
-                int x = base.Read();
-
-                if (x == -1) return x;
-                else if (x == '\r') return x;
-                else if (x == '\n')
-                {
-                    ++line;
-                    col = 1;
                     return x;
-                }
-                else ++col;
-                return x;
-            };
+                };
 
-            int c, c2;
+                int c, c2;
 
-            // Read single chars at a time, relying on buffering implemented by base StreamReader class:
-            c = readNext();
-            while (c != -1)
-            {
-                // Parse comments and don't emit them:
-                if (c == '/')
+                c = readNext();
+                while (c != -1)
                 {
-                    c2 = readNext();
-                    if (c2 == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-
-                    if (c2 == '/')
+                    // Parse comments and don't emit them:
+                    if (c == '/')
                     {
-                        // single line comment
-                        c = readNext();
-                        while (c != -1)
-                        {
-                            // Presence of an '\r' is irrelevant since we're not consuming it for storage.
+                        c2 = readNext();
+                        if (c2 == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
 
-                            // Stop at '\n':
-                            if (c == '\n')
-                            {
-                                if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.Untouched)
-                                {
-                                    yield return emit((char)c);
-                                }
-                                c = readNext();
-                                break;
-                            }
-                            else if (c == '\r')
-                            {
-                                if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.Untouched)
-                                {
-                                    yield return emit((char)c);
-                                }
-                                c = readNext();
-                            }
-                            else c = readNext();
-                        }
-                    }
-                    else if (c2 == '*')
-                    {
-                        // block comment
-                        c = readNext();
-                        while (c != -1)
+                        if (c2 == '/')
                         {
-                            // Read up until '*/':
-                            if (c == '*')
+                            // single line comment
+                            c = readNext();
+                            while (c != -1)
                             {
-                                c = readNext();
-                                if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                                else if (c == '/') break;
+                                // Presence of an '\r' is irrelevant since we're not consuming it for storage.
+
+                                // Stop at '\n':
+                                if (c == '\n')
+                                {
+                                    c = readNext();
+                                    break;
+                                }
+                                else if (c == '\r')
+                                {
+                                    c = readNext();
+                                }
                                 else c = readNext();
                             }
-                            else c = readNext();
                         }
-                        if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                        c = readNext();
-                        continue;
-                    }
-                    // Not either comment type:
-                    else throw new HsonParserException(line, col, "Unknown comment type");
-                }
-                else if (c == '@')
-                {
-                    c = readNext();
-                    if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                    if (c == '"')
-                    {
-                        // Parse the multiline string and emit a JSON string literal while doing so:
-                        if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
+                        else if (c2 == '*')
                         {
-                            if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
-                        }
-
-                        // Emit the opening '"':
-                        yield return emit('"');
-
-                        c = readNext();
-                        if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                        while (c != -1)
-                        {
-                            // Is it a terminating '"' or a double '""'?
-                            if (c == '"')
+                            // block comment
+                            c = readNext();
+                            while (c != -1)
                             {
-                                c = readNext();
+                                // Read up until '*/':
+                                if (c == '*')
+                                {
+                                    c = readNext();
+                                    if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+                                    else if (c == '/') break;
+                                    else c = readNext();
+                                }
+                                else c = readNext();
+                            }
+                            if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+                            c = readNext();
+                            continue;
+                        }
+                        // Not either comment type:
+                        else throw new HsonParserException(posRead, "Unknown comment type");
+                    }
+                    else if (c == '@')
+                    {
+                        c = readNext();
+                        if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+
+                        SourcePosition emitSource = posRead;
+
+                        // @"multi-line string literal":
+                        if (c == '"')
+                        {
+                            // Parse the multiline string and emit a string literal token:
+                            StringBuilder emit = new StringBuilder();
+
+                            c = readNext();
+                            if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+                            while (c != -1)
+                            {
+                                // Is it a terminating '"' or a double '""'?
                                 if (c == '"')
                                 {
-                                    // Double quote chars are emitted as a single escaped quote char:
-                                    yield return emit('\\');
-                                    yield return emit('"');
+                                    c = readNext();
+                                    if (c == '"')
+                                    {
+                                        // Double quote chars are emitted as a single escaped quote char:
+                                        emit.Append('\\');
+                                        emit.Append('"');
+                                        c = readNext();
+                                    }
+                                    else
+                                    {
+                                        // Exit:
+                                        break;
+                                    }
+                                }
+                                else if (c == '\\')
+                                {
+                                    // Backslashes have no special meaning in multiline strings, pass them through as escaped:
+                                    emit.Append('\\');
+                                    emit.Append('\\');
+                                    c = readNext();
+                                }
+                                else if (c == '\r')
+                                {
+                                    emit.Append('\\');
+                                    emit.Append('r');
+                                    c = readNext();
+                                }
+                                else if (c == '\n')
+                                {
+                                    emit.Append('\\');
+                                    emit.Append('n');
                                     c = readNext();
                                 }
                                 else
                                 {
-                                    // Emit the terminating '"' and exit:
-                                    yield return emit('"');
-                                    break;
+                                    // Emit any other regular char:
+                                    emit.Append((char)c);
+                                    c = readNext();
                                 }
+                                if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+                            }
+                            // Yield the string literal token:
+                            yield return new Token(emitSource, TokenType.StringLiteral, emit.ToString());
+                        }
+                        // @directive...
+                        else if (Char.IsLetter((char)c))
+                        {
+                            // Read the word up to the next non-word char:
+                            StringBuilder sbDirective = new StringBuilder("import".Length);
+                            sbDirective.Append((char)c);
+                            while ((c = readNext()) != -1)
+                            {
+                                if (!Char.IsLetter((char)c)) break;
+                                sbDirective.Append((char)c);
+                            }
+                            if (c == -1) throw new HsonParserException(posRead, "Unexpected end of directive");
+
+                            string directive = sbDirective.ToString();
+                            if (directive == "import")
+                            {
+                                // @import directive
+                                if (c != '(') throw new HsonParserException(posRead, "Expected '('");
+                                c = readNext();
+                                // Parse a string argument:
+                                if (c != '"') throw new HsonParserException(posRead, "Expected '\"'");
+                                StringBuilder sbValue = new StringBuilder(80);
+                                while ((c = readNext()) != -1)
+                                {
+                                    if (c == '"') break;
+                                    sbValue.Append((char)c);
+                                }
+                                if (c != '"') throw new HsonParserException(posRead, "Expected '\"'");
+                                c = readNext();
+                                if (c != ')') throw new HsonParserException(posRead, "Expected ')'");
+                                c = readNext();
+
+                                // Call the import function to get an IEnumerator<Token> to stream its output through to our caller:
+                                string path = sbValue.ToString();
+                                using (var imported = Import(path))
+                                {
+                                    while (imported.MoveNext())
+                                    {
+                                        yield return imported.Current;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                throw new HsonParserException(posRead, "Unknown directive, '@{0}'", directive);
+                            }
+                        }
+                        else
+                        {
+                            throw new HsonParserException(posRead, "Unknown @directive");
+                        }
+                    }
+                    else if (c == '"')
+                    {
+                        // Parse the string literal:
+                        SourcePosition emitSource = posRead;
+                        c = readNext();
+                        if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+
+                        StringBuilder emit = new StringBuilder(80);
+                        while (c != -1)
+                        {
+                            if (c == '"')
+                            {
+                                // Exit:
+                                break;
                             }
                             else if (c == '\\')
                             {
-                                // Backslashes have no special meaning in multiline strings, pass them through as escaped:
-                                yield return emit('\\');
-                                yield return emit('\\');
+                                // We don't care what escape sequence it is so long as we handle the '\"' case properly.
+
+                                // Emit the '\':
+                                emit.Append((char)c);
+
+                                // An early-terminated escape sequence is an error:
                                 c = readNext();
-                            }
-                            else if (c == '\r')
-                            {
-                                yield return emit('\\');
-                                yield return emit('r');
-                                c = readNext();
-                            }
-                            else if (c == '\n')
-                            {
-                                yield return emit('\\');
-                                yield return emit('n');
+                                if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
+
+                                // Emit the escaped char too:
+                                emit.Append((char)c);
                                 c = readNext();
                             }
                             else
                             {
-                                // Emit any other regular char:
-                                yield return emit((char)c);
+                                // Emit regular characters:
+                                emit.Append((char)c);
                                 c = readNext();
                             }
-                            if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
+
+                            if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
                         }
+
+                        c = readNext();
+
+                        // TODO: concatenace neighboring string literals!
+                        yield return new Token(emitSource, TokenType.StringLiteral, emit.ToString());
                     }
-                    else if (Char.IsLetter((char)c))
+                    // Don't actually parse the underlying JSON, just recognize its basic tokens:
+                    else if (Char.IsWhiteSpace((char)c))
                     {
-                        // Read the word up to the next non-word char:
-                        StringBuilder sbDirective = new StringBuilder(6);
-                        sbDirective.Append((char)c);
-                        while ((c = readNext()) != -1)
-                        {
-                            if (!Char.IsLetter((char)c)) break;
-                            sbDirective.Append((char)c);
-                        }
-                        if (c == -1) throw new HsonParserException(line, col, "Unexpected end of directive");
-
-                        string directive = sbDirective.ToString();
-                        if (directive == "import")
-                        {
-                            // @import directive
-                            if (c != '(') throw new HsonParserException(line, col, "Expected '('");
-                            c = readNext();
-                            // Parse a string argument:
-                            if (c != '"') throw new HsonParserException(line, col, "Expected '\"'");
-                            StringBuilder sbValue = new StringBuilder(80);
-                            while ((c = readNext()) != -1)
-                            {
-                                if (c == '"') break;
-                                sbValue.Append((char)c);
-                            }
-                            if (c != '"') throw new HsonParserException(line, col, "Expected '\"'");
-                            c = readNext();
-                            if (c != ')') throw new HsonParserException(line, col, "Expected ')'");
-                            c = readNext();
-                            // Call the import function to get an HsonReader to stream its output through to our caller:
-                            string path = sbValue.ToString();
-                            using (var imported = ImportStream(path))
-                            {
-                                int importEpos = epos;
-
-                                // Imported Source Map segments get copied to our `_segments` list + an offset:
-                                imported.RecordMappingSegment = (seg) => _segments.Add(new REST0.APIService.SourceMap.Segment(seg.TargetLinePosition + importEpos, seg.SourceName, seg.SourceLineNumber, seg.SourceLinePosition));
-
-                                // Stream all the characters in:
-                                while ((c2 = imported.Read()) != -1)
-                                {
-                                    yield return (char)c2;
-                                }
-
-                                epos += imported._emittedCount;
-                            }
-                        }
-                        else
-                        {
-                            throw new HsonParserException(line, col, "Unknown directive, '@{0}'", directive);
-                        }
+                        // Don't emit whitespace runs as a token.
+                        c = readNext();
                     }
-                    else
+                    else if (c == '{')
                     {
-                        throw new HsonParserException(line, col, "Unknown @directive");
+                        yield return new Token(posRead, TokenType.OpenCurly);
+                        c = readNext();
                     }
-                }
-                else if (c == '"')
-                {
-                    // Parse and emit the string literal:
-                    if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
+                    else if (c == '[')
                     {
-                        if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
+                        yield return new Token(posRead, TokenType.OpenBracket);
+                        c = readNext();
                     }
-                    yield return emit((char)c);
+                    else if (c == ',')
+                    {
+                        yield return new Token(posRead, TokenType.Comma);
+                        c = readNext();
+                    }
+                    else if (c == ':')
+                    {
+                        yield return new Token(posRead, TokenType.Colon);
+                        c = readNext();
+                    }
+                    else if (c == ']')
+                    {
+                        yield return new Token(posRead, TokenType.CloseBracket);
+                        c = readNext();
+                    }
+                    else if (c == '}')
+                    {
+                        yield return new Token(posRead, TokenType.CloseCurly);
+                        c = readNext();
+                    }
+                    // FIXME: what's '_' doing here?
+                    else if (Char.IsLetterOrDigit((char)c) || c == '_' || c == '.')
+                    {
+                        SourcePosition runStart = posRead;
 
-                    c = readNext();
-                    if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                    while (c != -1)
-                    {
-                        if (c == '"')
+                        StringBuilder emit = new StringBuilder();
+                        while ((c != -1) && (Char.IsLetterOrDigit((char)c) || c == '_' || c == '.'))
                         {
-                            // Yield the terminating '"' and exit:
-                            yield return emit((char)c);
-                            break;
-                        }
-                        else if (c == '\\')
-                        {
-                            // We don't care what escape sequence it is so long as we handle the '\"' case properly.
-                            yield return emit((char)c);
-                            c = readNext();
-                            // An early-terminated escape sequence is an error:
-                            if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                            // Yield the escape char too:
-                            yield return emit((char)c);
+                            emit.Append((char)c);
                             c = readNext();
                         }
-                        else
-                        {
-                            yield return emit((char)c);
-                            c = readNext();
-                        }
-                        if (c == -1) throw new HsonParserException(line, col, "Unexpected end of stream");
-                    }
 
-                    c = readNext();
-                }
-                // Don't actually parse the underlying JSON, just recognize its basic tokens:
-                else if (c == '{' || c == '[' || c == ',')
-                {
-                    if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
-                    {
-                        if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
+                        yield return new Token(runStart, TokenType.Raw, emit.ToString());
                     }
-                    yield return emit((char)c);
-                    c = readNext();
+                    else throw new HsonParserException(posRead, "Unexpected character '{0}'", (char)c);
                 }
-                else if (c == ':' || c == ']' || c == '}')
-                {
-                    yield return emit((char)c);
-                    c = readNext();
-                }
-                else if (Char.IsLetterOrDigit((char)c) || c == '_' || c == '.')
-                {
-                    if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.OnlySpacesAfterCommaAndColon)
-                    {
-                        if (lastEmitted == ':' || lastEmitted == ',') yield return emit(' ');
-                    }
-                    yield return emit((char)c);
-                    c = readNext();
-                }
-                else if (Char.IsWhiteSpace((char)c))
-                {
-                    if (EmitterOptions.WhitespaceHandling == JsonWhitespaceHandling.Untouched)
-                    {
-                        yield return emit((char)c);
-                    }
-                    c = readNext();
-                }
-                else throw new HsonParserException(line, col, "Unexpected character '{0}'", (char)c);
             }
-        }
-
-        #endregion
-
-        #region Public overrides
-
-        public override int Read()
-        {
-            if (!hsonStripper.MoveNext()) return -1;
-            return hsonStripper.Current;
-        }
-
-        public override int Peek()
-        {
-            return hsonStripper.Current;
-        }
-
-        public override int Read(char[] buffer, int index, int count)
-        {
-            if (count == 0) return 0;
-            if (index >= buffer.Length) throw new ArgumentOutOfRangeException("index");
-            if (count > buffer.Length) throw new ArgumentOutOfRangeException("count");
-            if (index + count > buffer.Length) throw new ArgumentOutOfRangeException("count");
-
-            int nr;
-            for (nr = index; (nr < count) & hsonStripper.MoveNext(); ++nr)
-            {
-                buffer[nr] = hsonStripper.Current;
-            }
-
-            return nr;
-        }
-
-        public override string ReadLine()
-        {
-            var sb = new StringBuilder();
-            while (hsonStripper.MoveNext() & (hsonStripper.Current != '\n'))
-            {
-                sb.Append(hsonStripper.Current);
-            }
-            return sb.ToString();
-        }
-
-        public override string ReadToEnd()
-        {
-            var sb = new StringBuilder();
-            while (hsonStripper.MoveNext())
-            {
-                sb.Append(hsonStripper.Current);
-            }
-            return sb.ToString();
         }
 
         #endregion
@@ -585,6 +563,164 @@ here""",
             }
         }
 #endif
+        #endregion
+    }
+
+    /// <summary>
+    /// Translates a JSON token stream into a character stream.
+    /// </summary>
+    public sealed class JsonTokenStream : TextReader
+    {
+        readonly IEnumerator<int> charStream;
+        readonly List<SourceMap.Segment> segments;
+
+        public JsonTokenStream(IEnumerator<Token> input)
+        {
+            this.segments = new List<SourceMap.Segment>(1024);
+            this.charStream = ProduceChars(input, segments);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                charStream.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        /// <summary>
+        /// Produce individual characters out of the token stream.
+        /// </summary>
+        /// <returns></returns>
+        static IEnumerator<int> ProduceChars(IEnumerator<Token> input, List<SourceMap.Segment> segments)
+        {
+            int pos = 1;
+
+            // Keeps track of the output position:
+            Func<int, int> emit = (e) => { ++pos; return e; };
+
+            using (input)
+                while (input.MoveNext())
+                {
+                    var tok = input.Current;
+
+                    // Add a new sourcemap segment for the upcoming output:
+                    segments.Add(new SourceMap.Segment(pos, tok.Source.Name, tok.Source.LineNumber, tok.Source.LinePosition));
+
+                    switch (tok.TokenType)
+                    {
+                        case TokenType.Raw:
+                            foreach (char c in tok.Text)
+                                yield return emit((int)c);
+                            break;
+                        case TokenType.StringLiteral:
+                            yield return emit('"');
+                            foreach (char c in tok.Text)
+                                yield return emit((int)c);
+                            yield return emit('"');
+                            break;
+                        case TokenType.Colon:
+                            yield return emit(':');
+                            break;
+                        case TokenType.Comma:
+                            yield return emit(',');
+                            break;
+                        case TokenType.OpenCurly:
+                            yield return emit('{');
+                            break;
+                        case TokenType.OpenBracket:
+                            yield return emit('[');
+                            break;
+                        case TokenType.CloseBracket:
+                            yield return emit(']');
+                            break;
+                        case TokenType.CloseCurly:
+                            yield return emit('}');
+                            break;
+                        case TokenType.Invalid:
+                        default:
+                            throw new InvalidDataException("Invalid token type encountered");
+                    }
+                }
+        }
+
+        /// <summary>
+        /// Gets a new copy of the source map.
+        /// </summary>
+        public SourceMap.Map SourceMap
+        {
+            get
+            {
+                return new SourceMap.Map(
+                    // There's only ever one output line of JSON:
+                    new SourceMap.Line[1]
+                    {
+                        new SourceMap.Line(segments.ToArray())
+                    }
+                );
+            }
+        }
+
+        /// <summary>
+        /// Read a single character from the JSON token stream.
+        /// </summary>
+        /// <returns></returns>
+        public override int Read()
+        {
+            if (!charStream.MoveNext()) return -1;
+            return charStream.Current;
+        }
+
+        /// <summary>
+        /// Peeks at the last read character or throws an exception.
+        /// </summary>
+        /// <returns></returns>
+        public override int Peek()
+        {
+            // Might throw an exception if not initialized.
+            return charStream.Current;
+        }
+
+        #region Untested
+
+        public override int Read(char[] buffer, int index, int count)
+        {
+            if (count == 0) return 0;
+            if (index >= buffer.Length) throw new ArgumentOutOfRangeException("index");
+            if (count > buffer.Length) throw new ArgumentOutOfRangeException("count");
+            if (index + count > buffer.Length) throw new ArgumentOutOfRangeException("count");
+
+            int nr;
+            for (nr = index; (nr < count) & charStream.MoveNext(); ++nr)
+            {
+                buffer[nr] = (char)charStream.Current;
+            }
+
+            return nr;
+        }
+
+        public override string ReadLine()
+        {
+            var sb = new StringBuilder(80);
+            while (charStream.MoveNext() && (charStream.Current != '\n'))
+            {
+                sb.Append((char)charStream.Current);
+            }
+            return sb.ToString();
+        }
+
+        public override string ReadToEnd()
+        {
+            var sb = new StringBuilder();
+            while (charStream.MoveNext())
+            {
+                sb.Append((char)charStream.Current);
+            }
+            return sb.ToString();
+        }
+
         #endregion
     }
 }
