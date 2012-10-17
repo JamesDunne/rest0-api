@@ -435,10 +435,9 @@ namespace System.Hson
                             if (c == -1) throw new HsonParserException(posRead, "Unexpected end of stream");
                         }
 
-                        c = readNext();
-
-                        // TODO: concatenace neighboring string literals!
                         yield return new Token(emitSource, TokenType.StringLiteral, emit.ToString());
+
+                        c = readNext();
                     }
                     // Don't actually parse the underlying JSON, just recognize its basic tokens:
                     else if (Char.IsWhiteSpace((char)c))
@@ -602,48 +601,81 @@ here""",
             Func<int, int> emit = (e) => { ++pos; return e; };
 
             using (input)
-                while (input.MoveNext())
+            {
+                // A local function to safely attempt to read the next token from the stream:
+                bool eof = false;
+                Func<Token?> read = () =>
                 {
-                    var tok = input.Current;
+                    if (eof) return null;
 
+                    if (!input.MoveNext())
+                    {
+                        eof = true;
+                        return null;
+                    }
+
+                    return input.Current;
+                };
+
+                // Emit characters for all tokens:
+                var tok = read();
+                while (tok.HasValue)
+                {
                     // Add a new sourcemap segment for the upcoming output:
-                    segments.Add(new SourceMap.Segment(pos, tok.Source.Name, tok.Source.LineNumber, tok.Source.LinePosition));
+                    segments.Add(new SourceMap.Segment(pos, tok.Value.Source.Name, tok.Value.Source.LineNumber, tok.Value.Source.LinePosition));
 
-                    switch (tok.TokenType)
+                    // Emit characters for the current token:
+                    switch (tok.Value.TokenType)
                     {
                         case TokenType.Raw:
-                            foreach (char c in tok.Text)
+                            // This should probably be a 'null', 'true', 'false', or numeric literal that HsonReader was too lazy to parse:
+                            foreach (char c in tok.Value.Text)
                                 yield return emit((int)c);
+                            tok = read();
                             break;
                         case TokenType.StringLiteral:
                             yield return emit('"');
-                            foreach (char c in tok.Text)
-                                yield return emit((int)c);
+                            // Keep concatenating neighboring string literals together:
+                            while (tok.HasValue && (tok.Value.TokenType == TokenType.StringLiteral))
+                            {
+                                // NOTE: could possibly write out a SourceMap.Segments for each token but what's the point? It's just one big string literal.
+                                // Characters are already backslash escaped from HsonReader:
+                                foreach (char c in tok.Value.Text)
+                                    yield return emit((int)c);
+                                tok = read();
+                            }
                             yield return emit('"');
                             break;
                         case TokenType.Colon:
                             yield return emit(':');
+                            tok = read();
                             break;
                         case TokenType.Comma:
                             yield return emit(',');
+                            tok = read();
                             break;
                         case TokenType.OpenCurly:
                             yield return emit('{');
+                            tok = read();
                             break;
                         case TokenType.OpenBracket:
                             yield return emit('[');
+                            tok = read();
                             break;
                         case TokenType.CloseBracket:
                             yield return emit(']');
+                            tok = read();
                             break;
                         case TokenType.CloseCurly:
                             yield return emit('}');
+                            tok = read();
                             break;
                         case TokenType.Invalid:
                         default:
                             throw new InvalidDataException("Invalid token type encountered");
                     }
                 }
+            }
         }
 
         /// <summary>

@@ -123,7 +123,18 @@
                 "max": { "sqlName": "@max", "sqlType": "varchar(max)" }
             },
             "query": {
-                "select":   "@max",
+                "select":   "@max"
+            }
+        },
+        "HsonParserTest": {
+            "query": {
+                // Adjacent string literals are combined into one. This is useful for breaking up a one-line
+                // string literal across multiple lines without embedding newline chars or using a multi-line
+                // string literal.
+                "select":   "row1"
+                            ", row2"
+                            ", row3"
+                // Result will be "row1, row2, row3"
             }
         }
     }
