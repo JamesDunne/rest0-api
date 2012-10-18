@@ -604,7 +604,7 @@ here""",
             {
                 // A local function to safely attempt to read the next token from the stream:
                 bool eof = false;
-                Func<Token?> read = () =>
+                Func<Token?> nextToken = () =>
                 {
                     if (eof) return null;
 
@@ -618,7 +618,7 @@ here""",
                 };
 
                 // Emit characters for all tokens:
-                var tok = read();
+                var tok = nextToken();
                 while (tok.HasValue)
                 {
                     // Add a new sourcemap segment for the upcoming output:
@@ -631,7 +631,7 @@ here""",
                             // This should probably be a 'null', 'true', 'false', or numeric literal that HsonReader was too lazy to parse:
                             foreach (char c in tok.Value.Text)
                                 yield return emit((int)c);
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.StringLiteral:
                             yield return emit('"');
@@ -642,33 +642,33 @@ here""",
                                 // Characters are already backslash escaped from HsonReader:
                                 foreach (char c in tok.Value.Text)
                                     yield return emit((int)c);
-                                tok = read();
+                                tok = nextToken();
                             }
                             yield return emit('"');
                             break;
                         case TokenType.Colon:
                             yield return emit(':');
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.Comma:
                             yield return emit(',');
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.OpenCurly:
                             yield return emit('{');
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.OpenBracket:
                             yield return emit('[');
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.CloseBracket:
                             yield return emit(']');
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.CloseCurly:
                             yield return emit('}');
-                            tok = read();
+                            tok = nextToken();
                             break;
                         case TokenType.Invalid:
                         default:

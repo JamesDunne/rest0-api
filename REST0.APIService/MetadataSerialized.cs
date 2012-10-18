@@ -10,8 +10,8 @@ namespace REST0.APIService
     class MetadataSerialized
     {
         public string configHash;
-        public string service;
-        public string method;
+        public string serviceName;
+        public string methodName;
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public string deprecated;
         public MetadataTimingsSerialized timings;
