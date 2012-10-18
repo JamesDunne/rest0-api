@@ -329,8 +329,9 @@ by introducing a new section, `parameterTypes`.
 Parameter Types
 ---------------
 
-Parameter types are described by `parameterTypes` sections. These sections may appear at the global level, the service
-level, or the method level.
+Parameter types are described by `parameterTypes` sections. These sections may appear at the global level or the service
+level but *not* at the method level. Parameter type names must be unique per service and shared across all methods of
+the service.
 
 Let's take a look at an example `parameterTypes` section:
 

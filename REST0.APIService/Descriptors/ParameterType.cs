@@ -31,6 +31,7 @@ namespace REST0.APIService.Descriptors
             {
                 return "{0}{1}".F(
                     TypeBase,
+                    // TODO: (max)
                     Length.HasValue ? "({0}{1})".F(Length.Value, Scale.HasValue ? ",{0}".F(Scale.Value) : String.Empty) : String.Empty
                 );
             }

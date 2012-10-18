@@ -83,7 +83,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Descriptors\ColumnMapping.cs" />
-    <Compile Include="Descriptors\RestfulLink.cs" />
+    <Compile Include="Descriptors\Connection.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="APIHttpAsyncHandler.cs" />
     <Compile Include="HsonReader.cs" />

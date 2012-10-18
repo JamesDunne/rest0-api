@@ -22,12 +22,12 @@ namespace REST0.APIService.Descriptors
         public List<string> Errors { get; set; }
     }
 
-    class ServiceSerialized
+    class ServiceMetadata
     {
         [JsonIgnore]
-        readonly Service desc;
+        protected readonly Service desc;
 
-        internal ServiceSerialized(Service desc)
+        internal ServiceMetadata(Service desc)
         {
             this.desc = desc;
         }
@@ -50,8 +50,49 @@ namespace REST0.APIService.Descriptors
             }
         }
 
-        [JsonProperty("errors", NullValueHandling = NullValueHandling.Ignore)]
-        public IList<string> Errors { get { return desc.Errors; } }
+        [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
+        public ConnectionMetadata Connection { get { return new ConnectionMetadata(desc.ConnectionString); } }
+
+        [JsonProperty("methodLinks", NullValueHandling = NullValueHandling.Ignore)]
+        public IDictionary<string, RestfulLink> MethodLinks
+        {
+            get
+            {
+                return desc.Methods.ToDictionary(
+                    m => m.Key,
+                    m => RestfulLink.Create("child", "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name))
+                );
+            }
+        }
+    }
+
+    class ServiceDebug
+    {
+        [JsonIgnore]
+        readonly Service desc;
+
+        internal ServiceDebug(Service desc)
+        {
+            this.desc = desc;
+        }
+
+        [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
+        public string Name
+        {
+            get
+            {
+                return desc.Name;
+            }
+        }
+
+        [JsonProperty("base", NullValueHandling = NullValueHandling.Ignore)]
+        public string BaseService
+        {
+            get
+            {
+                return desc.BaseService == null ? null : desc.BaseService.Name;
+            }
+        }
 
         [JsonProperty("$", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, string> Tokens
@@ -62,9 +103,6 @@ namespace REST0.APIService.Descriptors
                 return desc.Tokens;
             }
         }
-
-        [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
-        public string ConnectionString { get { return desc.ConnectionString; } }
 
         [JsonProperty("parameterTypes", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, ParameterType> ParameterTypes
@@ -81,15 +119,15 @@ namespace REST0.APIService.Descriptors
             }
         }
 
+        [JsonProperty("connection", NullValueHandling = NullValueHandling.Ignore)]
+        public ConnectionDebug Connection { get { return new ConnectionDebug(desc.ConnectionString); } }
+
         [JsonProperty("methodLinks", NullValueHandling = NullValueHandling.Ignore)]
-        public IDictionary<string, RestfulLink> MethodLinks
+        public RestfulLink[] MethodLinks
         {
             get
             {
-                return desc.Methods.ToDictionary(
-                    m => m.Key,
-                    m => RestfulLink.Create("child", "/meta/{0}/{1}".F(m.Value.Service.Name, m.Value.Name))
-                );
+                return desc.Methods.Select(p => RestfulLink.Create(p.Key, "/debug/{0}/{1}".F(p.Value.Service.Name, p.Value.Name))).ToArray();
             }
         }
     }
