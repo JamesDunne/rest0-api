@@ -13,7 +13,8 @@ namespace REST0.APIService.Descriptors
         public string Description { get; set; }
         public bool IsOptional { get; set; }
         // `DBNull.Value` or a `System.Data.SqlTypes` object representing the default value.
-        public object DefaultValue { get; set; }
+        public object DefaultSQLValue { get; set; }
+        public object DefaultCLRValue { get; set; }
         // Mutually exclusive:
         public ParameterType SqlType { get; set; }
         public ParameterType Type { get; set; }

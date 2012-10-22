@@ -613,10 +613,17 @@ namespace REST0.APIService
                 {
                     var jpDefault = joParam.Property("default");
                     if (jpDefault != null)
+                    {
                         // Parse the default value into a SqlValue:
-                        param.DefaultValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
+                        param.DefaultSQLValue = jsonToSqlValue(jpDefault.Value, param.SqlType ?? param.Type);
+                        param.DefaultCLRValue = jsonToCLRValue(jpDefault.Value, param.SqlType ?? param.Type);
+                    }
                     else
-                        param.DefaultValue = DBNull.Value;
+                    {
+                        // Use null:
+                        param.DefaultSQLValue = DBNull.Value;
+                        param.DefaultCLRValue = null;
+                    }
                 }
 
                 method.Parameters.Add(jpParam.Name, param);
@@ -809,6 +816,36 @@ namespace REST0.APIService
                         default: return new SqlDouble((double)jToken);
                     }
                 case JTokenType.Null: return DBNull.Value;
+                // Not really much else here to support.
+                default:
+                    throw new Exception("Unsupported JSON token type {0}".F(jToken.Type));
+            }
+        }
+
+        static object jsonToCLRValue(JToken jToken, ParameterType targetType)
+        {
+            switch (jToken.Type)
+            {
+                case JTokenType.String: return ((string)jToken);
+                case JTokenType.Boolean: return ((bool)jToken);
+                case JTokenType.Integer:
+                    switch (targetType.SqlDbType)
+                    {
+                        case SqlDbType.Int: return ((int)jToken);
+                        case SqlDbType.BigInt: return ((long)jToken);
+                        case SqlDbType.SmallInt: return ((short)jToken);
+                        case SqlDbType.TinyInt: return ((byte)(int)jToken);
+                        case SqlDbType.Decimal: return ((decimal)jToken);
+                        default: return ((int)jToken);
+                    }
+                case JTokenType.Float:
+                    switch (targetType.SqlDbType)
+                    {
+                        case SqlDbType.Float: return ((double)jToken);
+                        case SqlDbType.Decimal: return ((decimal)jToken);
+                        default: return ((double)jToken);
+                    }
+                case JTokenType.Null: return null;
                 // Not really much else here to support.
                 default:
                     throw new Exception("Unsupported JSON token type {0}".F(jToken.Type));
@@ -1296,8 +1333,10 @@ namespace REST0.APIService
             return new JsonRootResponse(statusCode: statusCode, message: message, errors: errorData.ToArray());
         }
 
+        #region SQL Type and Value conversion
+
         /// <summary>
-        /// 
+        /// Attempts to convert a SQL type name into a SqlDbType enum value.
         /// </summary>
         /// <param name="typeBase">assumed to be lowercase</param>
         /// <returns></returns>
@@ -1387,6 +1426,48 @@ namespace REST0.APIService
                 default: return null;
             }
         }
+
+        static object getCLRValue(SqlDbType sqlDbType, string value)
+        {
+            if (value == null) return DBNull.Value;
+            if (value == "\0") return DBNull.Value;
+
+            switch (sqlDbType)
+            {
+                case SqlDbType.BigInt: return (Int64.Parse(value));
+                case SqlDbType.Binary: return (Convert.FromBase64String(value));
+                case SqlDbType.Bit: return (Boolean.Parse(value));
+                case SqlDbType.Char: return (value);
+                case SqlDbType.Date: return (DateTime.Parse(value));
+                case SqlDbType.DateTime:
+                case SqlDbType.DateTime2: return DateTime.Parse(value);
+                case SqlDbType.DateTimeOffset: return DateTimeOffset.Parse(value);
+                case SqlDbType.Decimal: return (Decimal.Parse(value));
+                case SqlDbType.Float: return (Double.Parse(value));
+                case SqlDbType.Image: return (Convert.FromBase64String(value));
+                case SqlDbType.Int: return (Int32.Parse(value));
+                case SqlDbType.Money: return (Decimal.Parse(value));
+                case SqlDbType.NChar: return (value);
+                case SqlDbType.NVarChar: return (value);
+                case SqlDbType.NText: return (value);
+                case SqlDbType.Real: return (Double.Parse(value));
+                case SqlDbType.SmallDateTime: return (DateTime.Parse(value));
+                case SqlDbType.SmallInt: return (Int16.Parse(value));
+                case SqlDbType.SmallMoney: return (Decimal.Parse(value));
+                //case SqlDbType.Variant: return new (Double.Parse(value));
+                case SqlDbType.Text: return (value);
+                case SqlDbType.Time: return DateTime.Parse(value);
+                case SqlDbType.Timestamp: return Convert.FromBase64String(value);
+                case SqlDbType.TinyInt: return (Byte.Parse(value));
+                case SqlDbType.UniqueIdentifier: return new Guid(value);
+                case SqlDbType.VarBinary: return (Convert.FromBase64String(value));
+                case SqlDbType.VarChar: return (value);
+                case SqlDbType.Xml: return (value);
+                default: return null;
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// Represents a row mapping implementation.
@@ -1581,9 +1662,47 @@ namespace REST0.APIService
         {
             var req = context.Request;
 
-            // GET requests only:
+            // Handle GET requests only:
             if (req.HttpMethod != "GET")
                 return new JsonRootResponse(statusCode: 405, statusDescription: "HTTP Method Not Allowed", message: "HTTP Method Not Allowed");
+
+            var rsp = await ProcessRequest(context);
+            if (rsp == null) return null;
+
+            // Not a JSON response? Return it:
+            var root = rsp as JsonRootResponse;
+            if (root == null) return rsp;
+
+            // Check request header X-Exclude:
+            string xexclude = req.Headers["X-Exclude"];
+            if (xexclude == null) return rsp;
+
+            // Comma-delimited list of response items to exclude:
+            string[] excluded = xexclude.Split(',', ' ');
+            bool includeLinks = true, includeMeta = true;
+            if (excluded.Contains("links", StringComparer.OrdinalIgnoreCase))
+                includeLinks = false;
+            if (excluded.Contains("meta", StringComparer.OrdinalIgnoreCase))
+                includeMeta = false;
+
+            // If nothing to exclude, return the original response:
+            if (includeLinks & includeMeta) return rsp;
+
+            // Filter out 'links' and/or 'meta':
+            return new JsonRootResponse(
+                statusCode: root.statusCode,
+                statusDescription: root.statusDescription,
+                message: root.message,
+                links: includeLinks ? root.links : null,
+                meta: includeMeta ? root.meta : null,
+                errors: root.errors,
+                results: root.results
+            );
+        }
+
+        async Task<IHttpResponseAction> ProcessRequest(IHttpRequestContext context)
+        {
+            var req = context.Request;
 
             // Capture the current service configuration values only once per connection in case they update during:
             var main = this.services;
@@ -1665,9 +1784,9 @@ namespace REST0.APIService
                                 configHash = main.HashHexString,
                             },
                             errors: new[]
-                        {
-                            new { actionName }
-                        }
+                            {
+                                new { actionName }
+                            }
                         );
                     }
                 }
@@ -1686,9 +1805,9 @@ namespace REST0.APIService
                             configHash = main.HashHexString
                         },
                         errors: new[]
-                    {
-                        new { serviceName }
-                    }
+                        {
+                            new { serviceName }
+                        }
                     );
 
                 if (path.Length == 2)
@@ -1719,6 +1838,10 @@ namespace REST0.APIService
                             meta: new
                             {
                                 configHash = main.HashHexString
+                            },
+                            errors: new[]
+                            {
+                                new { actionName }
                             }
                         );
                     }
@@ -1749,9 +1872,10 @@ namespace REST0.APIService
                         {
                             configHash = main.HashHexString
                         },
-                        errors: new[] {
-                        new { methodName }
-                    }
+                        errors: new[]
+                        {
+                            new { methodName }
+                        }
                     );
 
                 if (actionName == "data")
@@ -1782,6 +1906,10 @@ namespace REST0.APIService
                         meta: new
                         {
                             configHash = main.HashHexString
+                        },
+                        errors: new[]
+                        {
+                            new { actionName }
                         }
                     );
                 }
@@ -1836,12 +1964,18 @@ namespace REST0.APIService
                         {
                             configHash = main.HashHexString,
                             serviceName = method.Service.Name,
-                            methodName = method.Name,
-                            parameters = missingParams.ToDictionary(
-                                p => p,
-                                p => new ParameterSerialized(method.Parameters[p]),
-                                StringComparer.OrdinalIgnoreCase
-                            )
+                            methodName = method.Name
+                        },
+                        errors: new[]
+                        {
+                            new
+                            {
+                                missingParams = missingParams.ToDictionary(
+                                    p => p,
+                                    p => new ParameterSerialized(method.Parameters[p]),
+                                    StringComparer.OrdinalIgnoreCase
+                                )
+                            }
                         }
                     );
 
@@ -1852,6 +1986,8 @@ namespace REST0.APIService
             using (var conn = new SqlConnection(method.ConnectionString))
             using (var cmd = conn.CreateCommand())
             {
+                var parameterValues = new Dictionary<string, ParameterValue>(method.Parameters == null ? 0 : method.Parameters.Count);
+
                 // Add parameters:
                 if (method.Parameters != null)
                 {
@@ -1859,14 +1995,15 @@ namespace REST0.APIService
                     {
                         bool isValid = true;
                         string message = null;
-                        object sqlValue;
+                        object sqlValue, clrValue;
                         var paramType = (param.Value.SqlType ?? param.Value.Type);
                         string rawValue = queryString[param.Key];
 
                         if (param.Value.IsOptional & (rawValue == null))
                         {
                             // Use the default value if the parameter is optional and is not specified on the query-string:
-                            sqlValue = param.Value.DefaultValue;
+                            sqlValue = param.Value.DefaultSQLValue;
+                            clrValue = param.Value.DefaultCLRValue;
                         }
                         else
                         {
@@ -1885,24 +2022,15 @@ namespace REST0.APIService
                                 sqlValue = DBNull.Value;
                                 message = ex.Message;
                             }
+
+                            try
+                            {
+                                clrValue = getCLRValue(paramType.SqlDbType, rawValue);
+                            }
+                            catch { clrValue = null; }
                         }
 
-                        // TODO: consider rolling all errors up into a single response
-                        if (!isValid)
-                            return new JsonRootResponse(
-                                statusCode: 400,
-                                statusDescription: "Invalid parameter value",
-                                message: "Invalid parameter value for '{0}'".F(param.Key),
-                                meta: new
-                                {
-                                    configHash = main.HashHexString,
-                                    serviceName = method.Service.Name,
-                                    methodName = method.Name
-                                },
-                                errors: new[] {
-                                    new { parameterName = param.Key, message }
-                                }
-                            );
+                        parameterValues.Add(param.Key, isValid ? new ParameterValue(clrValue) : new ParameterValue(message, rawValue));
 
                         // Add the SQL parameter:
                         var sqlprm = cmd.Parameters.Add(param.Value.Name, paramType.SqlDbType);
@@ -1911,6 +2039,24 @@ namespace REST0.APIService
                         if (paramType.Scale != null) sqlprm.Scale = (byte)paramType.Scale.Value;
                         sqlprm.SqlValue = sqlValue;
                     }
+                }
+
+                // Abort if we have invalid parameters:
+                var invalidParameters = parameterValues.Where(p => !p.Value.isValid);
+                if (invalidParameters.Any())
+                {
+                    return new JsonRootResponse(
+                        statusCode: 400,
+                        statusDescription: "Invalid parameter value(s)",
+                        message: "Invalid parameter value(s)",
+                        meta: new
+                        {
+                            configHash = main.HashHexString,
+                            serviceName = method.Service.Name,
+                            methodName = method.Name
+                        },
+                        errors: invalidParameters.Select(p => (object)new { name = p.Key, attemptedValue = p.Value.attemptedValue, message = p.Value.message }).ToArray()
+                    );
                 }
 
                 //cmd.CommandTimeout = 360;   // seconds
@@ -1972,6 +2118,7 @@ namespace REST0.APIService
                         serviceName = method.Service.Name,
                         methodName = method.Name,
                         deprecated = method.DeprecatedMessage,
+                        parameters = parameterValues,
                         // Timings are in msec:
                         timings = new MetadataTimingsSerialized
                         {

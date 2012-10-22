@@ -14,6 +14,8 @@ namespace REST0.APIService
         public string methodName;
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public string deprecated;
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public Dictionary<string, ParameterValue> parameters;
         public MetadataTimingsSerialized timings;
     }
 }
