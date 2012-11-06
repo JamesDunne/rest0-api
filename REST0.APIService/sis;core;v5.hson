@@ -10,6 +10,31 @@
                 "where":        "(st.LastName = @lastName)",
                 "select":       "${Student;st}"
             }
+        },
+        "SubQueryTest": {
+            "query": {
+                // Complex from clause:
+                "from": [
+                    // First two elements are required: [ subquery or name, alias ]:
+                    "${Student}", "st",
+                    // Next elements are optional sets of [ join type, subquery or name, alias, join condition ]:
+                    // join type can be 'join' or 'inner join', 'left join', 'outer join'.
+                    "left join", "StudentNotes", "stn", "st.StudentID = stn.StudentID",
+                    "left join", {
+                        "select":   "1 as id"
+                    }, "b", "b.id = st.StudentID",
+                    "left join", {
+                        // Complex from cases can be nested as subqueries:
+                        "from": [
+                            {
+                                "select":   "2 as id"
+                            }, "d"
+                        ],
+                        "select":   "d.id"
+                    }, "c", "c.id = st.StudentID"
+                ],
+                "select":       "${Student;st}, stn.Notes, b.id, c.id"
+            }
         }
     }
 }

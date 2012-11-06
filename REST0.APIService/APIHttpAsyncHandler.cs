@@ -53,6 +53,7 @@ namespace REST0.APIService
         /// Refresh configuration on every N-second mark on the clock.
         /// </summary>
         const int refreshInterval = 5;
+        const bool refreshEnable = true;
 
         public async Task<bool> Initialize(IHttpAsyncHostHandlerContext context)
         {
@@ -61,20 +62,23 @@ namespace REST0.APIService
 
             // Let a background task refresh the config data every N seconds:
 #pragma warning disable 4014
-            Task.Run(async () =>
+            if (refreshEnable)
             {
-                while (true)
+                Task.Run(async () =>
                 {
-                    // Wait until the next even N-second mark on the clock:
-                    const long secN = TimeSpan.TicksPerSecond * refreshInterval;
-                    var now = DateTime.UtcNow;
-                    var nextN = new DateTime(((now.Ticks + secN) / secN) * secN, DateTimeKind.Utc);
-                    await Task.Delay(nextN.Subtract(now));
+                    while (true)
+                    {
+                        // Wait until the next even N-second mark on the clock:
+                        const long secN = TimeSpan.TicksPerSecond * refreshInterval;
+                        var now = DateTime.UtcNow;
+                        var nextN = new DateTime(((now.Ticks + secN) / secN) * secN, DateTimeKind.Utc);
+                        await Task.Delay(nextN.Subtract(now));
 
-                    // Refresh config data:
-                    await RefreshConfigData();
-                }
-            });
+                        // Refresh config data:
+                        await RefreshConfigData();
+                    }
+                });
+            }
 #pragma warning restore 4014
 
             return true;
@@ -441,7 +445,7 @@ namespace REST0.APIService
             return coll;
         }
 
-        private void parseMethods(JProperty jpMethods, Service svc, string connectionString, IDictionary<string, ParameterType> parameterTypes, IDictionary<string, Method> methods, Func<string, string> tokenLookup)
+        void parseMethods(JProperty jpMethods, Service svc, string connectionString, IDictionary<string, ParameterType> parameterTypes, IDictionary<string, Method> methods, Func<string, string> tokenLookup)
         {
             if (jpMethods.Value.Type != JTokenType.Object)
             {
@@ -528,7 +532,7 @@ namespace REST0.APIService
             } // foreach (var method)
         }
 
-        private static void parseParameters(JProperty jpParameters, Method method, IDictionary<string, ParameterType> parameterTypes, Func<string, string> tokenLookup)
+        static void parseParameters(JProperty jpParameters, Method method, IDictionary<string, ParameterType> parameterTypes, Func<string, string> tokenLookup)
         {
             if (jpParameters.Value.Type != JTokenType.Object)
             {
@@ -630,7 +634,7 @@ namespace REST0.APIService
             }
         }
 
-        private static void parseQuery(JProperty jpQuery, Method method, Func<string, string> tokenLookup)
+        static void parseQuery(JProperty jpQuery, Method method, Func<string, string> tokenLookup)
         {
             if (jpQuery.Value.Type != JTokenType.Object)
             {
@@ -651,7 +655,25 @@ namespace REST0.APIService
             }
 
             // The rest are optional:
-            method.Query.From = getString(joQuery.Property("from")).Interpolate(tokenLookup);
+            var jpFrom = joQuery.Property("from");
+            if (jpFrom != null && jpFrom.Value.Type == JTokenType.Array)
+            {
+                // If the "from" property is an array, treat it as a subquery with optional joins:
+                // [
+                //   { subquery } | "object1Name", "alias1Name"
+                //  (optional):
+                //   ,"join",        { subquery } | "object2Name", "alias2Name", "join condition"
+                //   ,"left join",   { subquery } | "object3Name", "alias3Name", "join condition"
+                //   ,"outer join",  { subquery } | "object4Name", "alias4Name", "join condition"
+                //   ...
+                // ]
+                method.Query.From = parseQueryFrom((JArray)jpFrom.Value, method.Errors, String.Empty).Interpolate(tokenLookup);
+            }
+            else if (jpFrom != null && jpFrom.Value.Type == JTokenType.String)
+            {
+                // Otherwise, assume it's a string:
+                method.Query.From = getString(jpFrom).Interpolate(tokenLookup);
+            }
             method.Query.Where = getString(joQuery.Property("where")).Interpolate(tokenLookup);
             method.Query.GroupBy = getString(joQuery.Property("groupBy")).Interpolate(tokenLookup);
             method.Query.Having = getString(joQuery.Property("having")).Interpolate(tokenLookup);
@@ -762,7 +784,191 @@ namespace REST0.APIService
             method.Query.SQL = qb.ToString();
         }
 
-        private Dictionary<string, ColumnMapping> parseMapping(JObject joMapping, List<string> errors)
+        static string parseQueryFrom(JArray jaSubquery, List<string> errors, string indent)
+        {
+            // Expect either an object or a string first:
+            if (jaSubquery.Count < 2)
+            {
+                errors.Add("'from' array must have at least two elements: an object name or subquery, and an alias");
+                return null;
+            }
+
+            var sb = new StringBuilder();
+            if (jaSubquery[0].Type == JTokenType.Object)
+            {
+                var subquery = parseSubquery((JObject)jaSubquery[0], errors, indent + "    ");
+                if (subquery == null) return null;
+                sb.AppendFormat("(\r\n{0}", indent + "    ");
+                sb.Append(subquery);
+                sb.AppendFormat("\r\n{0})", indent);
+            }
+            else if (jaSubquery[0].Type == JTokenType.String)
+            {
+                var objname = (string)((JValue)jaSubquery[0]).Value;
+                sb.Append(objname);
+            }
+            else
+            {
+                errors.Add("'from' array must have either an array or a string for element 1");
+                return null;
+            }
+
+            if (jaSubquery[1].Type != JTokenType.String)
+            {
+                errors.Add("'from' array must have a string for element 2 as the alias name");
+                return null;
+            }
+            sb.Append(' ');
+            sb.Append(((JValue)jaSubquery[1]).Value);
+
+            int i = 2;
+            while (i < jaSubquery.Count)
+            {
+                // Expect a string for the join type:
+                if (jaSubquery[i].Type != JTokenType.String)
+                {
+                    errors.Add("Expected string type for element {0}".F(i + 1));
+                    return null;
+                }
+
+                string joinType = (string)((JValue)jaSubquery[i]).Value;
+                switch (joinType)
+                {
+                    case "join":
+                    case "inner join":
+                        sb.AppendFormat("\r\n{0}INNER JOIN ", indent);
+                        break;
+                    case "left join":
+                        sb.AppendFormat("\r\n{0}LEFT JOIN  ", indent);
+                        break;
+                    case "outer join":
+                        sb.AppendFormat("\r\n{0}OUTER JOIN ", indent);
+                        break;
+                    // TODO: more cases
+                    default:
+                        errors.Add("Unrecognized join type '{0}'".F(joinType));
+                        return null;
+                }
+
+                // Move forward:
+                ++i;
+                if (i >= jaSubquery.Count)
+                {
+                    errors.Add("Unexpected end of 'from' array at element {0}".F(i + 1));
+                    return null;
+                }
+
+                // Expect either an object or a string:
+                if (jaSubquery[i].Type == JTokenType.Object)
+                {
+                    var subquery = parseSubquery((JObject)jaSubquery[i], errors, indent + "    ");
+                    if (subquery == null) return null;
+                    sb.AppendFormat("(\r\n{0}", indent + "    ");
+                    sb.Append(subquery);
+                    sb.AppendFormat("\r\n{0})", indent);
+                }
+                else if (jaSubquery[i].Type == JTokenType.String)
+                {
+                    var objname = (string)((JValue)jaSubquery[i]).Value;
+                    sb.Append(objname);
+                }
+                else
+                {
+                    errors.Add("'from' array must have either an array or a string for element {0}".F(i + 1));
+                    return null;
+                }
+
+                // Move forward:
+                ++i;
+                if (i >= jaSubquery.Count)
+                {
+                    errors.Add("Unexpected end of 'from' array at element {0}".F(i + 1));
+                    return null;
+                }
+
+                if (jaSubquery[i].Type != JTokenType.String)
+                {
+                    errors.Add("'from' array must have a string for element {0} as the alias name".F(i + 1));
+                    return null;
+                }
+                sb.Append(' ');
+                sb.Append((string)((JValue)jaSubquery[i]).Value);
+
+                // Move forward:
+                ++i;
+                if (i >= jaSubquery.Count)
+                {
+                    errors.Add("Unexpected end of 'from' array at element {0}".F(i + 1));
+                    return null;
+                }
+
+                if (jaSubquery[i].Type != JTokenType.String)
+                {
+                    errors.Add("'from' array must have a string for element {0} as the join condition".F(i + 1));
+                    return null;
+                }
+                sb.Append(" ON (");
+                sb.Append((string)((JValue)jaSubquery[i]).Value);
+                sb.Append(')');
+
+                // Move forward:
+                ++i;
+            }
+
+            return sb.ToString();
+        }
+
+        static string parseSubquery(JObject joSubquery, List<string> errors, string indent)
+        {
+            // Parse the separated form of a query; this ensures that a SELECT query form is constructed.
+
+            // 'select' is required:
+            string select = getString(joSubquery.Property("select"));
+            if (String.IsNullOrEmpty(select))
+            {
+                errors.Add("A `select` clause is required");
+                return null;
+            }
+
+            string from = null;
+
+            // The rest are optional:
+            var jpFrom = joSubquery.Property("from");
+            if (jpFrom != null && jpFrom.Value.Type == JTokenType.Array)
+            {
+                // If the "from" property is an array, treat it as a subquery with optional joins:
+                // [
+                //   { subquery } | "object1Name", "alias1Name"
+                //  (optional):
+                //   ,"join",        { subquery } | "object2Name", "alias2Name", "join condition"
+                //   ,"left join",   { subquery } | "object3Name", "alias3Name", "join condition"
+                //   ,"outer join",  { subquery } | "object4Name", "alias4Name", "join condition"
+                //   ...
+                // ]
+                from = parseQueryFrom((JArray)jpFrom.Value, errors, indent);
+            }
+            else if (jpFrom != null && jpFrom.Value.Type == JTokenType.String)
+            {
+                // Otherwise, assume it's a string:
+                from = getString(jpFrom);
+            }
+            string where = getString(joSubquery.Property("where"));
+            string groupBy = getString(joSubquery.Property("groupBy"));
+            string having = getString(joSubquery.Property("having"));
+            string orderBy = getString(joSubquery.Property("orderBy"));
+
+            var qb = new StringBuilder();
+            qb.AppendFormat("SELECT {0}", select);
+            if (!String.IsNullOrEmpty(from)) qb.AppendFormat("\r\n{1}FROM {0}", from, indent);
+            if (!String.IsNullOrEmpty(where)) qb.AppendFormat("\r\n{1}WHERE {0}", where, indent);
+            if (!String.IsNullOrEmpty(groupBy)) qb.AppendFormat("\r\n{1}GROUP BY {0}", groupBy, indent);
+            if (!String.IsNullOrEmpty(having)) qb.AppendFormat("\r\n{1}HAVING {0}", having, indent);
+            if (!String.IsNullOrEmpty(orderBy)) qb.AppendFormat("\r\n{1}ORDER BY {0}", orderBy, indent);
+
+            return qb.ToString();
+        }
+
+        Dictionary<string, ColumnMapping> parseMapping(JObject joMapping, List<string> errors)
         {
             var mapping = new Dictionary<string, ColumnMapping>();
             foreach (var prop in joMapping.Properties())
