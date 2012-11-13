@@ -7,7 +7,7 @@ against an MS SQL Server and returns their results as JSON.
 For the service developer, there is no boilerplate C# or VB coding required. All you have to do is declare services and
 methods and the SQL queries for those methods inside a simple descriptor document.
 
-This project is based on my REST0 framework found at https://github.com/JamesDunne/rest0. This framework provides the
+This project is based on my Aardwolf framework found at https://github.com/JamesDunne/aardwolf. This framework provides the
 asynchronous HTTP service host which efficiently serves requests dynamically.
 
 Example
