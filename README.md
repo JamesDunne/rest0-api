@@ -519,7 +519,4 @@ Results:
               128 | 10809.10     | 0
               256 | 10346.60     | 0
               512 | 10747.20     | 0
-
-There is a max limit of 1,000 concurrent connections that I cannot overcome currently. This will likely require rewriting
-the main event loop of the REST0 framework.
 ```
