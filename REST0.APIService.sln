@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2012
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REST0.APIService", "REST0.APIService\REST0.APIService.csproj", "{BD145400-CB90-4EF7-90BF-9D5058D156BB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REST0", "REST0\REST0\REST0.csproj", "{E5622BC1-254B-4001-A02D-98652BE74D1E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aardwolf", "Aardwolf\Aardwolf\Aardwolf.csproj", "{E5622BC1-254B-4001-A02D-98652BE74D1E}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{66DA9AA3-8D9B-4AE8-8A69-799687564ED9}"
 	ProjectSection(SolutionItems) = preProject

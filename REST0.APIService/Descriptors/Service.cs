@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
+using Aardwolf;
 
 namespace REST0.APIService.Descriptors
 {

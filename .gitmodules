@@ -1,3 +1,3 @@
-[submodule "REST0"]
-	path = REST0
-	url = git@github.com:JamesDunne/rest0.git
+[submodule "Aardwolf"]
+	path = Aardwolf
+	url = git@github.com:JamesDunne/aardwolf.git
